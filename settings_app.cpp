@@ -1,5 +1,6 @@
 #include "settings_app.h"
 #include "ui.h"
+#include "keyboard.h"
 #include <LilyGoLib.h>
 #include <Preferences.h>
 
@@ -70,7 +71,7 @@ static void keyboard_cb(lv_event_t *e)
 {
     keyboard_light = lv_obj_has_state(lv_event_get_target_obj(e), LV_STATE_CHECKED);
     prefs.putBool("kb_light", keyboard_light);
-    instance.kb.setBrightness(settings_keyboard_light());
+    keyboard_set_light(settings_keyboard_light());
 }
 
 static void show_battery()

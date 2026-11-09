@@ -1,0 +1,22 @@
+// The T-Deck's keyboard: an ESP32-C3 on I2C (0x55) that scans the key matrix. A task polls it every
+// 10 ms, apart from the screen's redraws, so quick taps aren't missed.
+//
+// With C3 firmware from June 2025 or later, which reports the key matrix: Shift and Sym work held
+// down or tapped first (a tap applies to the next key), holding Backspace repeats it, Mic is back
+// (Sym+Mic is 0), and the light can be set. Older C3 firmware (as on this T-Deck) ignores those
+// commands and sends one character per key press; that's detected on the first press and read
+// instead, with Shift and Sym held down, no Mic key and no light control. Either way, Shift+$ types
+// &, which no key shows.
+#pragma once
+#include <stdint.h>
+
+static const uint32_t KEY_MIC = 0xF0;
+
+// Starts the polling task; call after Wire is started (instance.begin()).
+void keyboard_begin();
+
+// The next key typed, if any: a printable character, '\n' (Enter), '\b' (Backspace) or KEY_MIC.
+bool keyboard_read(uint32_t &key);
+
+// Keyboard backlight, 0 (off) to 255.
+void keyboard_set_light(uint8_t level);

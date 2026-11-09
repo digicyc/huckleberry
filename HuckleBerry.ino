@@ -16,6 +16,7 @@
 #include "alarms.h"
 #include "bluetooth_app.h"
 #include "gps_app.h"
+#include "keyboard.h"
 #include "map_app.h"
 #include "map_download.h"
 #include "messages.h"
@@ -185,7 +186,7 @@ static void update_screen_power()
         ui_set_screen_off(true);
         lv_timer_pause(status_timer);
         instance.sleepDisplay();
-        instance.kb.setBrightness(0);
+        keyboard_set_light(0);
         lv_obj_remove_flag(wake_shield, LV_OBJ_FLAG_HIDDEN);
     } else if (!idle && !screen_on) {
         screen_on = true;
@@ -201,7 +202,7 @@ static void update_screen_power()
         lv_refr_now(NULL);
         instance.wakeupDisplay();
         instance.setBrightness(settings_brightness());
-        instance.kb.setBrightness(settings_keyboard_light());
+        keyboard_set_light(settings_keyboard_light());
     }
 }
 
@@ -391,7 +392,7 @@ static void type_text(const char *s)
         uint32_t key = (uint8_t)*s;
         if (*s == '\\' && s[1]) {
             s++;
-            key = *s == 'n' ? '\n' : *s == 'b' ? '\b' : *s == 'e' ? 0xF0 : (uint8_t)*s;
+            key = *s == 'n' ? '\n' : *s == 'b' ? '\b' : *s == 'e' ? KEY_MIC : (uint8_t)*s;
         }
         ui_inject_key(key);
         // LVGL reads a key press and its release in two input reads, one per refresh period.
@@ -453,9 +454,11 @@ void setup()
 {
     Serial.begin(115200);
 
-    // The radio is MeshCore's: messenger_init() starts it with MeshCore's settings.
+    // The radio is MeshCore's: messenger_init() starts it with MeshCore's settings. The keyboard is
+    // keyboard.cpp's.
     LilyGoDeviceInitOptions options = instance.getDefaultInitOptions();
     options.initRadio = false;
+    options.initKeyboard = false;
     instance.begin(options);
     setenv("TZ", TIME_ZONE, 1);
     tzset();
@@ -494,13 +497,13 @@ void setup()
     update_status(NULL);
     status_timer = lv_timer_create(update_status, 1000, NULL);
     instance.setBrightness(settings_brightness());
-    instance.kb.setBrightness(settings_keyboard_light());
+    keyboard_set_light(settings_keyboard_light());
     Serial.printf("HuckleBerry started in %lu ms\n", millis());
 }
 
 void loop()
 {
-    instance.loop();  // reads the keyboard, trackball and GPS
+    instance.loop();  // reads the trackball and GPS
     ui_input_tick();
     handle_serial();
     alarms_tick();

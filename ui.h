@@ -5,7 +5,8 @@
 // and rows on screen in the direction it rolls (or scrolls when there's nothing that way), a click
 // presses the focused item, and holding it goes home. The keyboard types into the focused text
 // field (or the screen's text field, if it has one); Enter presses the focused item, and the mic key
-// or Backspace outside a text field goes back. On a roller, up and down turn it and a click moves on.
+// goes back, as does Backspace when there's no text to delete. On a roller, up and down turn it and
+// a click moves on.
 #pragma once
 #include <lvgl.h>
 

@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "keyboard.h"
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
 #include <string.h>
@@ -7,7 +8,6 @@ static const uint32_t TOAST_MS = 2500;
 static const uint32_t LONG_PRESS_MS = 600;      // trackball hold that goes home
 static const int TRACKBALL_STEPS_PER_MOVE = 2;  // trackball pulses per focus move
 static const int SCROLL_STEP = 40;              // px per trackball move with nothing to focus
-static const uint32_t MIC_KEY = 0xF0;           // TDeckKeyboard::MicrophoneKeyCode
 
 lv_obj_t *make_screen()
 {
@@ -358,8 +358,14 @@ static void deliver_key(uint32_t key)
         return;
     }
     if (key == '\b' && !focused_is_textarea()) {
-        ui_back();
-        return;
+        // Backspace edits the screen's text field when it has text (the trackball may have moved
+        // the focus off it), and otherwise goes back.
+        lv_obj_t *ta = first_textarea();
+        if (!ta || !*lv_textarea_get_text(ta)) {
+            ui_back();
+            return;
+        }
+        lv_group_focus_obj(ta);
     }
     lv_obj_t *focused = lv_group_get_focused(group);
     if (key == LV_KEY_ENTER && focused && lv_obj_has_class(focused, &lv_roller_class)) {
@@ -585,29 +591,19 @@ static void trackball_event(const DeviceEvent &event, void *)
     ball_input = true;
 }
 
-static bool mic_pressed;
-
-static void keyboard_raw(bool pressed, uint8_t key)
-{
-    if (pressed && key == MIC_KEY) {
-        mic_pressed = true;
-    }
-}
-
 void ui_input_init(void (*go_home)())
 {
     home_cb = go_home;
     group = lv_group_create();
     lv_group_set_default(NULL);  // ui_input_tick() decides what's in the group
 
-    // Replace LilyGoLib's keyboard device with one that also takes trackball clicks.
-    if (lv_get_keyboard_indev()) {
-        lv_indev_delete(lv_get_keyboard_indev());
-    }
+    // One keypad device for keyboard keys and trackball clicks.
     keypad = lv_indev_create();
     lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
     lv_indev_set_read_cb(keypad, keypad_read);
     lv_indev_set_group(keypad, group);
+    // A key takes two reads (press, release); read often enough to keep up with fast typing.
+    lv_timer_set_period(lv_indev_get_read_timer(keypad), 10);
     if (lv_get_touch_indev()) {
         lv_indev_set_group(lv_get_touch_indev(), group);
     }
@@ -618,7 +614,7 @@ void ui_input_init(void (*go_home)())
     lv_indev_set_group(tap_indev, group);
 
     instance.onEvent(TRACKBALL_EVENT, trackball_event);
-    instance.kb.setRawCallback(keyboard_raw);
+    keyboard_begin();
     pinMode(TRACKBALL_CLICK, INPUT_PULLUP);
     lv_timer_create([](lv_timer_t *) { refresh_group(); }, 100, NULL);
 }
@@ -633,20 +629,11 @@ bool ui_input_tick()
     bool input = false;
 
     // Keyboard.
-    char c;
-    while (instance.getKeyChar(&c) == KEYBOARD_PRESSED) {
+    uint32_t key;
+    while (keyboard_read(key)) {
         input = true;
-        if (screen_off) {
-            continue;  // a key only wakes the screen
-        }
-        uint32_t key = (uint8_t)c;
-        deliver_key(key == '\n' ? LV_KEY_ENTER : key);
-    }
-    if (mic_pressed) {
-        mic_pressed = false;
-        input = true;
-        if (!screen_off) {
-            ui_back();
+        if (!screen_off) {  // a key only wakes the screen
+            ui_inject_key(key);
         }
     }
 
@@ -701,11 +688,11 @@ bool ui_input_tick()
 
 void ui_inject_key(uint32_t key)
 {
-    if (key == MIC_KEY) {
-        mic_pressed = true;
-        return;
+    if (key == KEY_MIC) {
+        ui_back();
+    } else {
+        deliver_key(key == '\n' ? LV_KEY_ENTER : key);
     }
-    deliver_key(key == '\n' ? LV_KEY_ENTER : key);
     lv_display_trigger_activity(NULL);
 }
 

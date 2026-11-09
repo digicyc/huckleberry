@@ -21,11 +21,18 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
 
 ## Using it
 
-- **Keyboard and trackball.** Rolling the trackball moves an outline between the buttons and rows on
-  screen (or scrolls when there's nothing that way); clicking it presses the outlined item, and
-  holding it for a moment goes home. Typing goes into the screen's text field; Enter sends or
-  presses. The **mic key**, or Backspace outside a text field, goes back. On the alarm time rollers,
-  up and down turn them and a click moves to the next one. Touch works everywhere too.
+- **Keyboard and trackball.** Typing goes into the screen's text field; Enter sends or presses.
+  Hold **Shift** for capitals and **Sym** for the symbols printed on the keys; **Shift + $** types
+  `&`, which isn't on any key. Backspace goes back when there's no text to delete. The keyboard's
+  own ESP32-C3 firmware on this T-Deck predates June 2025, so it only sends characters; with newer C3 firmware (flashed through the 6-pin header
+  next to RST with a USB-serial adapter, from LilyGo's `Keyboard_ESP32C3` example), Shift and Sym
+  also work tapped just before a key, Backspace repeats when held, the **mic key** goes back, and
+  the keyboard light follows Settings.
+
+  Rolling the trackball moves an outline between the buttons and rows on screen (or scrolls when
+  there's nothing that way); clicking it presses the outlined item, and holding it for a moment
+  goes home. On the alarm time rollers, up and down turn them and a click moves to the next
+  one. Touch works everywhere too.
 - **Status bar** (every screen): time, an envelope for unread messages, Bluetooth (blue while the
   phone is connected), Wi-Fi signal, GPS satellites (green with a fix) and battery.
 - **Screen timeout** is set in Settings (1 min by default). Any key, trackball move or tap wakes the
