@@ -1,0 +1,734 @@
+#include "ui.h"
+#include <LilyGoLib.h>
+#include <LV_Helper.h>
+#include <string.h>
+
+static const uint32_t TOAST_MS = 2500;
+static const uint32_t LONG_PRESS_MS = 600;      // trackball hold that goes home
+static const int TRACKBALL_STEPS_PER_MOVE = 2;  // trackball pulses per focus move
+static const int SCROLL_STEP = 40;              // px per trackball move with nothing to focus
+static const uint32_t MIC_KEY = 0xF0;           // TDeckKeyboard::MicrophoneKeyCode
+
+lv_obj_t *make_screen()
+{
+    lv_obj_t *screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_text_color(screen, lv_color_white(), 0);
+    lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    return screen;
+}
+
+lv_obj_t *make_label(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_style_text_color(label, color, 0);
+    return label;
+}
+
+lv_obj_t *make_title(lv_obj_t *screen, const char *text)
+{
+    lv_obj_t *title = make_label(screen, text, &lv_font_montserrat_20, lv_color_white());
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(title, SCREEN_W - 2 * 56, lv_font_get_line_height(&lv_font_montserrat_20));
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, STATUS_H + (HEADER_H - lv_font_get_line_height(&lv_font_montserrat_20)) / 2);
+    return title;
+}
+
+lv_obj_t *header_button(lv_obj_t *parent, const char *text, lv_align_t align, lv_event_cb_t cb)
+{
+    lv_obj_t *btn = lv_button_create(parent);
+    lv_obj_set_size(btn, 48, HEADER_H - 4);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_radius(btn, 8, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    lv_obj_center(make_label(btn, text, &lv_font_montserrat_20, ORANGE));
+    lv_obj_align(btn, align, align == LV_ALIGN_TOP_LEFT ? 4 : -4, STATUS_H + 2);
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+    if (align == LV_ALIGN_TOP_LEFT) {
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_USER_2);  // the back button, for ui_back()
+    }
+    return btn;
+}
+
+lv_obj_t *make_scroll_column(lv_obj_t *screen)
+{
+    lv_obj_t *cont = lv_obj_create(screen);
+    lv_obj_remove_style_all(cont);
+    lv_obj_set_size(cont, SCREEN_W, CONTENT_H);
+    lv_obj_align(cont, LV_ALIGN_TOP_MID, 0, CONTENT_Y);
+    lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_hor(cont, 10, 0);
+    lv_obj_set_style_pad_top(cont, 2, 0);
+    lv_obj_set_style_pad_bottom(cont, 10, 0);
+    lv_obj_set_style_pad_row(cont, 6, 0);
+    lv_obj_set_scroll_dir(cont, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_ACTIVE);
+    return cont;
+}
+
+lv_obj_t *make_card(lv_obj_t *parent, int32_t height, lv_event_cb_t cb, void *user_data)
+{
+    lv_obj_t *card = lv_obj_create(parent);
+    lv_obj_set_size(card, LV_PCT(100), height);
+    lv_obj_set_style_radius(card, 10, 0);
+    lv_obj_set_style_bg_color(card, CARD, 0);
+    lv_obj_set_style_border_width(card, 0, 0);
+    lv_obj_set_style_pad_hor(card, 10, 0);
+    lv_obj_set_style_pad_ver(card, 6, 0);
+    lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    if (cb) {
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x3A3A3C), LV_STATE_PRESSED);
+        lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, user_data);
+        ui_focusable(card);
+    } else {
+        lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    }
+    return card;
+}
+
+lv_obj_t *make_text_field(lv_obj_t *parent, const char *placeholder, uint32_t max_length)
+{
+    lv_obj_t *ta = lv_textarea_create(parent);
+    lv_textarea_set_one_line(ta, true);
+    lv_textarea_set_placeholder_text(ta, placeholder);
+    lv_textarea_set_max_length(ta, max_length);
+    lv_obj_set_width(ta, LV_PCT(100));
+    lv_obj_set_style_text_font(ta, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_bg_color(ta, CARD, 0);
+    lv_obj_set_style_radius(ta, 10, 0);
+    lv_obj_set_style_border_width(ta, 0, 0);
+    lv_obj_set_style_border_width(ta, 2, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(ta, ORANGE, LV_STATE_FOCUSED);
+    lv_obj_set_style_pad_ver(ta, 8, 0);
+    lv_obj_set_style_text_color(ta, GRAY, LV_PART_TEXTAREA_PLACEHOLDER);
+    return ta;
+}
+
+lv_obj_t *add_value_row(lv_obj_t *parent, const char *caption)
+{
+    lv_obj_t *row = make_card(parent, 34, NULL, NULL);
+    lv_obj_set_style_pad_ver(row, 0, 0);
+    lv_obj_t *cap = make_label(row, caption, &lv_font_montserrat_14, GRAY);
+    lv_obj_align(cap, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t *value = make_label(row, "", &lv_font_montserrat_16, lv_color_white());
+    lv_label_set_long_mode(value, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(value, 190, 0);
+    lv_obj_align(value, LV_ALIGN_RIGHT_MID, 0, 0);
+    return value;
+}
+
+lv_obj_t *add_switch_row(lv_obj_t *parent, const char *title, const char *note, bool on, lv_event_cb_t cb)
+{
+    lv_obj_t *row = make_card(parent, note ? 50 : 38, NULL, NULL);
+    lv_obj_set_style_pad_ver(row, 0, 0);
+    lv_obj_t *name = make_label(row, title, &lv_font_montserrat_16, lv_color_white());
+    lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, note ? -9 : 0);
+    if (note) {
+        lv_obj_t *hint = make_label(row, note, &lv_font_montserrat_12, GRAY);
+        lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(hint, 220);
+        lv_obj_align(hint, LV_ALIGN_LEFT_MID, 0, 11);
+    }
+    lv_obj_t *sw = lv_switch_create(row);
+    lv_obj_set_size(sw, 46, 24);
+    lv_obj_set_style_bg_color(sw, ORANGE, LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_align(sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (on) {
+        lv_obj_add_state(sw, LV_STATE_CHECKED);
+    }
+    lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, NULL);
+    return sw;
+}
+
+lv_obj_t *make_wide_button(lv_obj_t *parent, const char *text, bool primary, lv_event_cb_t cb, void *user_data)
+{
+    lv_obj_t *btn = lv_button_create(parent);
+    lv_obj_set_size(btn, LV_PCT(100), 36);
+    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_shadow_width(btn, 0, 0);
+    lv_obj_set_style_bg_color(btn, ORANGE, 0);
+    lv_obj_set_style_bg_opa(btn, primary ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn, primary ? 0 : 2, 0);
+    lv_obj_set_style_border_color(btn, ORANGE, 0);
+    lv_obj_center(make_label(btn, text, &lv_font_montserrat_16, primary ? lv_color_black() : ORANGE));
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
+    return btn;
+}
+
+void set_text(lv_obj_t *label, const char *text)
+{
+    if (strcmp(lv_label_get_text(label), text) != 0) {
+        lv_label_set_text(label, text);
+    }
+}
+
+void ui_open(lv_obj_t *screen)
+{
+    lv_screen_load_anim(screen, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 180, 0, false);
+}
+
+void ui_close(lv_obj_t *to)
+{
+    lv_screen_load_anim(to, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 180, 0, false);
+}
+
+static lv_obj_t *toast;
+static lv_timer_t *toast_timer;
+
+void ui_toast(const char *text)
+{
+    if (!toast) {
+        // Toasts sit on the top layer so they show over whichever screen is active.
+        toast = make_label(lv_layer_top(), "", &lv_font_montserrat_14, lv_color_white());
+        lv_obj_set_style_bg_color(toast, lv_color_hex(0x3A3A3C), 0);
+        lv_obj_set_style_bg_opa(toast, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(toast, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_hor(toast, 14, 0);
+        lv_obj_set_style_pad_ver(toast, 8, 0);
+        lv_obj_set_style_max_width(toast, SCREEN_W - 40, 0);
+        lv_obj_align(toast, LV_ALIGN_BOTTOM_MID, 0, -12);
+        lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
+        toast_timer = lv_timer_create([](lv_timer_t *t) {
+            lv_obj_add_flag(toast, LV_OBJ_FLAG_HIDDEN);
+            lv_timer_pause(t);
+        }, TOAST_MS, NULL);
+    }
+    lv_label_set_text(toast, text);
+    lv_obj_remove_flag(toast, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(toast);
+    lv_timer_reset(toast_timer);
+    lv_timer_resume(toast_timer);
+}
+
+// ---------- Input ----------
+//
+// One LVGL group holds the focusable objects of whatever is showing: the top layer when it has any
+// (a dialog), otherwise the active screen. It's rebuilt whenever that set changes, so apps don't
+// manage groups. A keypad input device delivers keyboard keys and trackball clicks to the focused
+// object; trackball rolls move the focus directly.
+
+static lv_group_t *group;
+static lv_indev_t *keypad;
+static void (*home_cb)();
+static bool screen_off;
+
+static uint32_t key_queue[16];
+static int key_count;
+static bool key_down;
+static uint32_t last_key;
+
+static int ball_dx, ball_dy;  // trackball pulses not yet acted on
+static uint32_t ball_at;      // last pulse, in ms
+static bool ball_input;       // pulses since the last tick
+
+static bool click_down, click_home_sent, inject_click, inject_long;
+static uint32_t click_at;
+
+static lv_obj_t *wanted_focus;
+
+static void queue_key(uint32_t key);
+static bool focused_is_textarea();
+static lv_obj_t *first_textarea();
+static void navigate(int dx, int dy);
+static void focus_with_outline(lv_obj_t *obj);
+
+static struct ScreenInput {
+    lv_obj_t *screen;
+    void (*on_ball)(int dx, int dy);
+    bool (*on_key)(uint32_t key);
+} screen_inputs[4];
+
+static lv_indev_t *tap_indev;
+static int tap_x, tap_y;
+static uint32_t tap_until;
+
+void ui_focusable(lv_obj_t *obj)
+{
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_USER_1);
+}
+
+static bool is_focusable(lv_obj_t *obj)
+{
+    if (!lv_obj_has_flag(obj, LV_OBJ_FLAG_CLICKABLE) || lv_obj_has_state(obj, LV_STATE_DISABLED)) {
+        return false;
+    }
+    if (lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1)) {
+        return true;
+    }
+    static const lv_obj_class_t *const CLASSES[] = {&lv_button_class, &lv_switch_class, &lv_slider_class, &lv_textarea_class,
+                                                    &lv_dropdown_class, &lv_checkbox_class, &lv_roller_class};
+    for (const lv_obj_class_t *c : CLASSES) {
+        if (lv_obj_has_class(obj, c)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void collect(lv_obj_t *obj, lv_obj_t **out, int &n, int max)
+{
+    uint32_t count = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < count && n < max; i++) {
+        lv_obj_t *child = lv_obj_get_child(obj, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
+            continue;
+        }
+        if (is_focusable(child)) {
+            out[n++] = child;
+        }
+        if (!lv_obj_has_class(child, &lv_textarea_class) && !lv_obj_has_class(child, &lv_dropdown_class)) {
+            collect(child, out, n, max);
+        }
+    }
+}
+
+// Rebuilds the group when what's focusable on screen changed.
+static void refresh_group()
+{
+    static const int MAX = 96;
+    lv_obj_t *objs[MAX];
+    int n = 0;
+    collect(lv_layer_top(), objs, n, MAX);
+    if (n == 0) {
+        collect(lv_screen_active(), objs, n, MAX);
+    }
+    bool same = (int)lv_group_get_obj_count(group) == n;
+    for (int i = 0; same && i < n; i++) {
+        same = lv_group_get_obj_by_index(group, i) == objs[i];
+    }
+    if (!same) {
+        lv_obj_t *focused = lv_group_get_focused(group);
+        bool keep = false;
+        lv_group_remove_all_objs(group);
+        for (int i = 0; i < n; i++) {
+            lv_group_add_obj(group, objs[i]);
+            keep |= objs[i] == focused;
+        }
+        if (keep) {
+            lv_group_focus_obj(focused);
+        }
+    }
+    if (wanted_focus) {
+        for (int i = 0; i < n; i++) {
+            if (objs[i] == wanted_focus) {
+                lv_group_focus_obj(wanted_focus);
+                wanted_focus = NULL;
+                break;
+            }
+        }
+    }
+}
+
+void ui_focus(lv_obj_t *obj)
+{
+    wanted_focus = obj;
+    refresh_group();
+}
+
+void ui_set_screen_input(lv_obj_t *screen, void (*on_ball)(int dx, int dy), bool (*on_key)(uint32_t key))
+{
+    for (ScreenInput &si : screen_inputs) {
+        if (!si.screen || si.screen == screen) {
+            si = {screen, on_ball, on_key};
+            return;
+        }
+    }
+}
+
+static ScreenInput *active_input()
+{
+    for (ScreenInput &si : screen_inputs) {
+        if (si.screen && si.screen == lv_screen_active()) {
+            return &si;
+        }
+    }
+    return NULL;
+}
+
+// Delivers a key: the screen's own handler first, then the focused object.
+static void deliver_key(uint32_t key)
+{
+    ScreenInput *si = active_input();
+    if (si && si->on_key && si->on_key(key)) {
+        return;
+    }
+    if (key == '\b' && !focused_is_textarea()) {
+        ui_back();
+        return;
+    }
+    lv_obj_t *focused = lv_group_get_focused(group);
+    if (key == LV_KEY_ENTER && focused && lv_obj_has_class(focused, &lv_roller_class)) {
+        // Up and down turn a roller, so a click finishes with it and moves on.
+        lv_group_focus_next(group);
+        lv_obj_t *next = lv_group_get_focused(group);
+        if (next) {
+            focus_with_outline(next);
+        }
+        return;
+    }
+    if (key >= ' ' && key < 0x7F && !focused_is_textarea()) {
+        lv_obj_t *ta = first_textarea();  // typing starts in the screen's text field
+        if (ta) {
+            lv_group_focus_obj(ta);
+        }
+    }
+    queue_key(key);
+}
+
+static void ball_step(int dx, int dy)
+{
+    ScreenInput *si = active_input();
+    if (si && si->on_ball) {
+        si->on_ball(dx, dy);
+    } else {
+        navigate(dx, dy);
+    }
+}
+
+void ui_back()
+{
+    lv_obj_t *screen = lv_screen_active();
+    uint32_t count = lv_obj_get_child_count(screen);
+    for (uint32_t i = 0; i < count; i++) {
+        lv_obj_t *child = lv_obj_get_child(screen, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_USER_2) && !lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_send_event(child, LV_EVENT_CLICKED, NULL);
+            return;
+        }
+    }
+}
+
+static void queue_key(uint32_t key)
+{
+    if (key_count < (int)(sizeof(key_queue) / sizeof(key_queue[0]))) {
+        key_queue[key_count++] = key;
+    }
+}
+
+static void keypad_read(lv_indev_t *, lv_indev_data_t *data)
+{
+    data->key = last_key;
+    data->state = LV_INDEV_STATE_RELEASED;
+    if (key_down) {
+        key_down = false;  // release the key pressed in the last read
+    } else if (key_count) {
+        last_key = key_queue[0];
+        memmove(key_queue, key_queue + 1, --key_count * sizeof(key_queue[0]));
+        data->key = last_key;
+        data->state = LV_INDEV_STATE_PRESSED;
+        key_down = true;
+    }
+}
+
+static void tap_read(lv_indev_t *, lv_indev_data_t *data)
+{
+    data->point.x = tap_x;
+    data->point.y = tap_y;
+    data->state = (long)(millis() - tap_until) < 0 ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static bool focused_is_textarea()
+{
+    lv_obj_t *f = lv_group_get_focused(group);
+    return f && lv_obj_has_class(f, &lv_textarea_class);
+}
+
+static lv_obj_t *first_textarea()
+{
+    for (uint32_t i = 0; i < lv_group_get_obj_count(group); i++) {
+        lv_obj_t *obj = lv_group_get_obj_by_index(group, i);
+        if (lv_obj_has_class(obj, &lv_textarea_class)) {
+            return obj;
+        }
+    }
+    return NULL;
+}
+
+static bool can_scroll(lv_obj_t *obj, int dx, int dy)
+{
+    if (!lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE)) {
+        return false;
+    }
+    lv_dir_t dir = lv_obj_get_scroll_dir(obj);
+    if (dy) {
+        return (dir & LV_DIR_VER) && (dy < 0 ? lv_obj_get_scroll_top(obj) : lv_obj_get_scroll_bottom(obj)) > 0;
+    }
+    return (dir & LV_DIR_HOR) && (dx < 0 ? lv_obj_get_scroll_left(obj) : lv_obj_get_scroll_right(obj)) > 0;
+}
+
+// The visible scrollable container that can scroll this way, preferring the biggest.
+static lv_obj_t *find_scrollable(lv_obj_t *obj, int dx, int dy, lv_obj_t *best)
+{
+    uint32_t count = lv_obj_get_child_count(obj);
+    for (uint32_t i = 0; i < count; i++) {
+        lv_obj_t *child = lv_obj_get_child(obj, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) {
+            continue;
+        }
+        if (can_scroll(child, dx, dy) &&
+            (!best || lv_obj_get_width(child) * lv_obj_get_height(child) > lv_obj_get_width(best) * lv_obj_get_height(best))) {
+            best = child;
+        }
+        best = find_scrollable(child, dx, dy, best);
+    }
+    return best;
+}
+
+static bool scroll_screen(int dx, int dy)
+{
+    lv_obj_t *target = NULL;
+    for (lv_obj_t *p = lv_group_get_focused(group); p && !target; p = lv_obj_get_parent(p)) {
+        if (can_scroll(p, dx, dy) && !lv_obj_has_class(p, &lv_textarea_class)) {
+            target = p;
+        }
+    }
+    if (!target) {
+        target = find_scrollable(lv_screen_active(), dx, dy, NULL);
+    }
+    if (!target) {
+        return false;
+    }
+    lv_obj_scroll_by_bounded(target, -dx * SCROLL_STEP, -dy * SCROLL_STEP, LV_ANIM_ON);
+    return true;
+}
+
+static void focus_with_outline(lv_obj_t *obj)
+{
+    lv_group_focus_obj(obj);
+    lv_obj_add_state(obj, LV_STATE_FOCUS_KEY);  // as when a keypad moves the focus
+    lv_obj_scroll_to_view_recursive(obj, LV_ANIM_ON);
+}
+
+// Moves the focus to the nearest object in the direction (dx, dy), one of which is 0.
+static void navigate(int dx, int dy)
+{
+    lv_obj_t *focused = lv_group_get_focused(group);
+    if (focused && !lv_obj_has_state(focused, LV_STATE_FOCUS_KEY)) {
+        // The first roll after touching (or opening a screen) just shows where the focus is.
+        focus_with_outline(focused);
+        return;
+    }
+    if (focused && dx && (lv_obj_has_class(focused, &lv_slider_class) || lv_obj_has_class(focused, &lv_textarea_class) ||
+                         lv_obj_has_class(focused, &lv_buttonmatrix_class))) {
+        lv_group_send_data(group, dx < 0 ? LV_KEY_LEFT : LV_KEY_RIGHT);  // adjust the value / move the cursor
+        return;
+    }
+    if (focused && dy && lv_obj_has_class(focused, &lv_roller_class)) {
+        lv_group_send_data(group, dy < 0 ? LV_KEY_UP : LV_KEY_DOWN);
+        return;
+    }
+    // In a text field, up and down scroll the screen (say, a chat's history) before leaving it.
+    if (focused && dy && lv_obj_has_class(focused, &lv_textarea_class) && scroll_screen(dx, dy)) {
+        return;
+    }
+
+    lv_area_t from;
+    if (focused) {
+        lv_obj_get_coords(focused, &from);
+    } else {
+        lv_area_set(&from, 0, 0, 0, 0);
+    }
+    int32_t fx = (from.x1 + from.x2) / 2, fy = (from.y1 + from.y2) / 2;
+    lv_obj_t *best = NULL;
+    int32_t best_score = INT32_MAX;
+    for (uint32_t i = 0; i < lv_group_get_obj_count(group); i++) {
+        lv_obj_t *obj = lv_group_get_obj_by_index(group, i);
+        if (obj == focused) {
+            continue;
+        }
+        lv_area_t a;
+        lv_obj_get_coords(obj, &a);
+        int32_t cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+        // Distance along the direction, and how far off to the side (0 if the boxes overlap).
+        int32_t along, side;
+        if (dy) {
+            along = dy > 0 ? a.y1 - from.y2 : from.y1 - a.y2;
+            if ((dy > 0 ? cy - fy : fy - cy) <= 0) {
+                continue;
+            }
+            side = a.x2 < from.x1 ? from.x1 - a.x2 : a.x1 > from.x2 ? a.x1 - from.x2 : 0;
+        } else {
+            along = dx > 0 ? a.x1 - from.x2 : from.x1 - a.x2;
+            if ((dx > 0 ? cx - fx : fx - cx) <= 0) {
+                continue;
+            }
+            side = a.y2 < from.y1 ? from.y1 - a.y2 : a.y1 > from.y2 ? a.y1 - from.y2 : 0;
+        }
+        int32_t score = LV_MAX(along, 0) + 3 * side;
+        if (score < best_score) {
+            best_score = score;
+            best = obj;
+        }
+    }
+    if (best) {
+        focus_with_outline(best);
+    } else if (!scroll_screen(dx, dy) && !focused && lv_group_get_obj_count(group)) {
+        focus_with_outline(lv_group_get_obj_by_index(group, 0));
+    }
+}
+
+static void trackball_event(const DeviceEvent &event, void *)
+{
+    switch (instance.getTrackballDirType(event)) {
+    case TRACKBALL_DIR_UP: ball_dy--; break;
+    case TRACKBALL_DIR_DOWN: ball_dy++; break;
+    case TRACKBALL_DIR_LEFT: ball_dx--; break;
+    case TRACKBALL_DIR_RIGHT: ball_dx++; break;
+    default: return;
+    }
+    ball_at = millis();
+    ball_input = true;
+}
+
+static bool mic_pressed;
+
+static void keyboard_raw(bool pressed, uint8_t key)
+{
+    if (pressed && key == MIC_KEY) {
+        mic_pressed = true;
+    }
+}
+
+void ui_input_init(void (*go_home)())
+{
+    home_cb = go_home;
+    group = lv_group_create();
+    lv_group_set_default(NULL);  // ui_input_tick() decides what's in the group
+
+    // Replace LilyGoLib's keyboard device with one that also takes trackball clicks.
+    if (lv_get_keyboard_indev()) {
+        lv_indev_delete(lv_get_keyboard_indev());
+    }
+    keypad = lv_indev_create();
+    lv_indev_set_type(keypad, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_read_cb(keypad, keypad_read);
+    lv_indev_set_group(keypad, group);
+    if (lv_get_touch_indev()) {
+        lv_indev_set_group(lv_get_touch_indev(), group);
+    }
+
+    tap_indev = lv_indev_create();
+    lv_indev_set_type(tap_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(tap_indev, tap_read);
+    lv_indev_set_group(tap_indev, group);
+
+    instance.onEvent(TRACKBALL_EVENT, trackball_event);
+    instance.kb.setRawCallback(keyboard_raw);
+    pinMode(TRACKBALL_CLICK, INPUT_PULLUP);
+    lv_timer_create([](lv_timer_t *) { refresh_group(); }, 100, NULL);
+}
+
+void ui_set_screen_off(bool off)
+{
+    screen_off = off;
+}
+
+bool ui_input_tick()
+{
+    bool input = false;
+
+    // Keyboard.
+    char c;
+    while (instance.getKeyChar(&c) == KEYBOARD_PRESSED) {
+        input = true;
+        if (screen_off) {
+            continue;  // a key only wakes the screen
+        }
+        uint32_t key = (uint8_t)c;
+        deliver_key(key == '\n' ? LV_KEY_ENTER : key);
+    }
+    if (mic_pressed) {
+        mic_pressed = false;
+        input = true;
+        if (!screen_off) {
+            ui_back();
+        }
+    }
+
+    // Trackball rolls, acted on every few pulses in the same direction.
+    if (ball_input) {
+        ball_input = false;
+        input = true;
+        if (screen_off) {
+            ball_dx = ball_dy = 0;
+        }
+    }
+    if (ball_dx || ball_dy) {
+        if (millis() - ball_at > 400) {
+            ball_dx = ball_dy = 0;  // a stray pulse
+        } else if (abs(ball_dy) >= TRACKBALL_STEPS_PER_MOVE || abs(ball_dx) >= TRACKBALL_STEPS_PER_MOVE) {
+            if (abs(ball_dy) >= abs(ball_dx)) {
+                ball_step(0, ball_dy > 0 ? 1 : -1);
+            } else {
+                ball_step(ball_dx > 0 ? 1 : -1, 0);
+            }
+            ball_dx = ball_dy = 0;
+        }
+    }
+
+    // Trackball click: a click presses the focused object when released; holding goes home.
+    bool down = digitalRead(TRACKBALL_CLICK) == LOW || inject_click;
+    if (down && !click_down) {
+        click_down = true;
+        click_home_sent = false;
+        click_at = millis();
+        input = true;
+    } else if (down && !click_home_sent && (millis() - click_at > LONG_PRESS_MS || inject_long)) {
+        click_home_sent = true;
+        if (!screen_off && home_cb) {
+            home_cb();
+        }
+    } else if (!down && click_down) {
+        click_down = false;
+        if (!click_home_sent && !screen_off) {
+            deliver_key(LV_KEY_ENTER);
+        }
+    }
+    if (inject_click && (millis() - click_at > (inject_long ? LONG_PRESS_MS + 100 : 50))) {
+        inject_click = inject_long = false;
+    }
+
+    if (input) {
+        lv_display_trigger_activity(NULL);
+    }
+    return input;
+}
+
+void ui_inject_key(uint32_t key)
+{
+    if (key == MIC_KEY) {
+        mic_pressed = true;
+        return;
+    }
+    deliver_key(key == '\n' ? LV_KEY_ENTER : key);
+    lv_display_trigger_activity(NULL);
+}
+
+void ui_inject_trackball(int dx, int dy)
+{
+    for (int i = 0; i < abs(dx); i++) {
+        ball_step(dx > 0 ? 1 : -1, 0);
+    }
+    for (int i = 0; i < abs(dy); i++) {
+        ball_step(0, dy > 0 ? 1 : -1);
+    }
+    lv_display_trigger_activity(NULL);
+}
+
+void ui_inject_click(bool long_press)
+{
+    inject_click = true;
+    inject_long = long_press;
+}
+
+void ui_inject_tap(int x, int y)
+{
+    tap_x = x;
+    tap_y = y;
+    tap_until = millis() + 80;
+}

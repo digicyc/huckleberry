@@ -1,0 +1,93 @@
+# HuckleBerry
+
+Phone-style firmware for the LilyGo T-Deck (Plus): a home screen with a clock and app icons,
+MeshCore LoRa messaging that also works as a companion radio for the MeshCore phone app, offline
+maps you can download on the device, GPS, weather, alarms, Wi-Fi, SD card and settings. It's the
+T-Watch WatchApp (`../T-Watch/WatchApp`) reworked for the T-Deck's 320×240 screen, keyboard and
+trackball.
+
+Built with `arduino-cli`, LilyGoLib's T-Deck board package, `../T-Watch/LilyGoLib` and
+`../T-Watch/LilyGoLib-ThirdParty`.
+
+```sh
+make deps               # once: board package and Arduino libraries
+make build              # compile into ./build
+make upload             # flash (finds the T-Deck's USB port, or pass PORT=/dev/ttyACMx)
+make monitor            # serial console at 115200
+make flash              # build + upload + monitor
+make settime            # set the clock from this computer (GPS, Wi-Fi and the phone app also set it)
+make screenshot         # save the screen to screenshot.png (OUT=file.png); needs uv
+```
+
+## Using it
+
+- **Keyboard and trackball.** Rolling the trackball moves an outline between the buttons and rows on
+  screen (or scrolls when there's nothing that way); clicking it presses the outlined item, and
+  holding it for a moment goes home. Typing goes into the screen's text field; Enter sends or
+  presses. The **mic key**, or Backspace outside a text field, goes back. On the alarm time rollers,
+  up and down turn them and a click moves to the next one. Touch works everywhere too.
+- **Status bar** (every screen): time, an envelope for unread messages, Bluetooth (blue while the
+  phone is connected), Wi-Fi signal, GPS satellites (green with a fix) and battery.
+- **Screen timeout** is set in Settings (1 min by default). Any key, trackball move or tap wakes the
+  screen where you left it; the waking tap doesn't press anything. The keyboard light turns off with
+  the screen. New messages and alarms wake it.
+- **Messages** (MeshCore, USA/Canada preset, 910.525 MHz): the Public channel, your group channels,
+  and a chat for each companion that has advertised. **+** joins a hashtag channel (`#name`; the key
+  comes from the name, so anyone using the same name can talk), creates a private group (random
+  key; the chat's info screen shows the key to share), or joins one with its 32-hex-digit key. It
+  also lists the people and nodes heard nearby (tap one to message it) and has **Advertise**. The
+  **This T-Deck** card sets the name others see (TDeck-XXXX by default) and whether your adverts
+  include your GPS position. New messages chime (Settings can silence it) and show a banner over
+  any app. Direct messages show Sent / Delivered / Failed. Chats are kept on the FFat partition.
+- **Bluetooth** lets the MeshCore iPhone app use the T-Deck as its radio. It shows the name the app
+  lists (**MeshCore-** plus the node name) and the six-digit PIN: in the app tap Connect, pick the
+  T-Deck and enter the PIN. Channels and contacts are shared with the app; channels you add in the
+  app appear in Messages within a couple of seconds, and messages sent from the phone show in the
+  chats here.
+- **Map** shows offline tiles from the SD card with your position as a blue dot and contacts that
+  share their location as purple pins. The trackball pans; Enter, `+` or `i` zooms in, `-` or `o`
+  zooms out, space or `c` re-centers, and `d` (or the download button) opens **Download map**: pick
+  a radius (2-25 km) and detail (zoom 13-16) around the map's center, and it fetches USGS Topo tiles
+  (public domain, US only) over Wi-Fi into `/maps/<z>/<x>/<y>.jpg`, skipping tiles already on the
+  card. `tools/download_map_tiles.py` does the same from a computer for bigger areas. Today's GPS
+  track is drawn as a trail colored by activity.
+- **GPS**: on/off switch, position, altitude, speed, HDOP, and signal bars per satellite. A fix sets
+  the clock and feeds your position to MeshCore. **Record track** saves a point every 10 m to
+  `/tracks/YYYY-MM-DD.csv` on the card, labeled walking/running/cycling/driving from your speed (the
+  T-Deck has no motion sensor). The receiver is found at whatever baud rate it's set to; a u-blox
+  sleeps when switched off.
+- **Weather** gets an Open-Meteo forecast (no key) for your position over Wi-Fi every 30 minutes;
+  the home screen shows the current temperature.
+- **Alarms**: up to 8, with repeat days; they ring on the speaker for a minute (Snooze = 5 min).
+- **Wi-Fi** joins a network with the keyboard and reconnects to it at boot; connecting also sets
+  the clock from internet time.
+- **SD Card**: size and free space, a read/write test, a file browser and text viewer, and Format
+  (FAT32) for a card that can't be read.
+- **Settings**: brightness, screen timeout, message sound, keyboard light, battery.
+
+The T-Deck has no RTC, so after a reboot the clock reads `--:--` until GPS, Wi-Fi, the phone app or
+`make settime` sets it.
+
+## Testing over USB serial
+
+The firmware takes one-line commands on the USB serial port (115200): `T<unix time>` sets the clock,
+`S` sends a screenshot (what `tools/screenshot.py` reads), `K<text>` types (`\n` Enter, `\b`
+Backspace, `\e` the mic key), `B<dx>,<dy>` rolls the trackball, `C` / `L` click / hold it, and
+`P<x>,<y>` taps the screen. Don't change DTR or RTS on the port: that resets the ESP32-S3.
+
+## MeshCore
+
+`lib/MeshCore` is a pinned copy of the parts of [MeshCore](https://github.com/meshcore-dev/MeshCore)
+this uses, including the companion radio node the phone app talks to; `tools/sync-meshcore.sh`
+updates it (see its header). Radio settings are in the Makefile (`MESH_FLAGS`).
+`SX126X_DIO2_AS_RF_SWITCH` is `true`, as in Meshtastic's T-Deck build (MeshCore's own T-Deck build
+uses `false`); receiving is confirmed, but if your sent messages aren't heard, try `false`.
+
+## Restoring the original firmware
+
+`backup/tdeck-original-flash.bin` is a full 16 MB image of the flash as it came (the Ripple UI
+MeshCore firmware). To put it back:
+
+```sh
+~/.arduino15/packages/esp32/tools/esptool_py/5.3.0/esptool --port /dev/ttyACM2 write-flash 0 backup/tdeck-original-flash.bin
+```
