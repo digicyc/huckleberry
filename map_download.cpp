@@ -16,12 +16,24 @@ static const char *TILE_URL = "https://basemap.nationalmap.gov/arcgis/rest/servi
 static const char *MAP_DIR = "/sd/maps";
 static const int MIN_ZOOM = 8;                // region overview; a few tiles
 static const int TILE_KB = 20;                // typical USGS Topo JPEG, for the estimate
+static const int US_TILE_KB = 14;             // overview tiles average less (a lot of them are sea)
 static const size_t MAX_TILE_BYTES = 256 * 1024;
 static const int MAX_FAILURES = 8;            // in a row, before giving up
 static const int CHECKS_PER_TICK = 16;        // tiles looked up on the card per loop
 
 static const int RADII_KM[] = {2, 5, 10, 25};
-static const char *const RADIUS_MAP[] = {"2 km", "5 km", "10 km", "25 km", ""};
+static const char *const RADIUS_MAP[] = {"2 km", "5 km", "10 km", "25 km", "All US", ""};
+static const int ALL_US = 4;  // the last area choice
+// "All US": a low-detail map of the whole country (about 2,750 tiles, 35-40 MB), which the Map app
+// blows up wherever there are no detailed tiles, so it's never blank. West, south, east, north.
+static const double US_BOXES[][4] = {
+    {-125.0, 24.4, -66.9, 49.4},   // lower 48
+    {-170.0, 51.0, -129.9, 71.5},  // Alaska
+    {-160.5, 18.8, -154.7, 22.3},  // Hawaii
+    {-67.3, 17.9, -65.2, 18.6},    // Puerto Rico
+};
+static const int US_MIN_ZOOM = 3, US_MAX_ZOOM = 8;
+static const int MAX_BOXES = sizeof(US_BOXES) / sizeof(US_BOXES[0]);
 static const int MAX_ZOOMS[] = {13, 14, 15, 16};
 static const char *const DETAIL_MAP[] = {"Low", "Medium", "High", "Street", ""};
 
@@ -61,9 +73,9 @@ static double center_lat, center_lon;
 static int radius_index = 1, detail_index = 1;
 
 static bool running;
-static ZoomRange ranges[20];
-static int max_zoom;
-static int cur_z, cur_x, cur_y;  // next tile to consider
+static ZoomRange ranges[MAX_BOXES][20];  // per box and zoom
+static int box_count, min_zoom, max_zoom;
+static int cur_z, cur_box, cur_x, cur_y;  // next tile to consider
 static uint32_t total, done, saved, failures, skipped;
 static char error[64];
 
@@ -88,18 +100,33 @@ static void tile_xy(double lat, double lon, int z, int &x, int &y)
     y = (int)fmin(n - 1, fmax(0, fy));
 }
 
-// Works out the tiles for the chosen radius and detail; returns how many.
+// Works out the tiles for the chosen area and detail; returns how many (tiles shared by two boxes
+// count twice, and the second is skipped as already there).
 static uint32_t plan()
 {
-    double km = RADII_KM[radius_index];
-    double dlat = km / 111.32, dlon = km / (111.32 * fmax(0.01, cos(center_lat * M_PI / 180)));
-    max_zoom = MAX_ZOOMS[detail_index];
+    double boxes[MAX_BOXES][4];
+    if (radius_index == ALL_US) {
+        memcpy(boxes, US_BOXES, sizeof(boxes));
+        box_count = MAX_BOXES;
+        min_zoom = US_MIN_ZOOM;
+        max_zoom = US_MAX_ZOOM;
+    } else {
+        double km = RADII_KM[radius_index];
+        double dlat = km / 111.32, dlon = km / (111.32 * fmax(0.01, cos(center_lat * M_PI / 180)));
+        double box[4] = {center_lon - dlon, center_lat - dlat, center_lon + dlon, center_lat + dlat};
+        memcpy(boxes[0], box, sizeof(box));
+        box_count = 1;
+        min_zoom = MIN_ZOOM;
+        max_zoom = MAX_ZOOMS[detail_index];
+    }
     uint32_t n = 0;
-    for (int z = MIN_ZOOM; z <= max_zoom; z++) {
-        ZoomRange &r = ranges[z];
-        tile_xy(center_lat + dlat, center_lon - dlon, z, r.x0, r.y0);
-        tile_xy(center_lat - dlat, center_lon + dlon, z, r.x1, r.y1);
-        n += (uint32_t)(r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1);
+    for (int b = 0; b < box_count; b++) {
+        for (int z = min_zoom; z <= max_zoom; z++) {
+            ZoomRange &r = ranges[b][z];
+            tile_xy(boxes[b][3], boxes[b][0], z, r.x0, r.y0);
+            tile_xy(boxes[b][1], boxes[b][2], z, r.x1, r.y1);
+            n += (uint32_t)(r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1);
+        }
     }
     return n;
 }
@@ -208,18 +235,21 @@ static bool save_tile()
     return ok;
 }
 
-// Moves to the next tile in the plan; false when there are none left.
+// Moves to the next tile in the plan (zoom by zoom, so the overview fills in first); false when
+// there are none left.
 static bool advance()
 {
-    if (++cur_y > ranges[cur_z].y1) {
-        cur_y = ranges[cur_z].y0;
-        if (++cur_x > ranges[cur_z].x1) {
-            if (++cur_z > max_zoom) {
-                return false;
+    if (++cur_y > ranges[cur_box][cur_z].y1) {
+        if (++cur_x > ranges[cur_box][cur_z].x1) {
+            if (++cur_box == box_count) {
+                cur_box = 0;
+                if (++cur_z > max_zoom) {
+                    return false;
+                }
             }
-            cur_x = ranges[cur_z].x0;
-            cur_y = ranges[cur_z].y0;
+            cur_x = ranges[cur_box][cur_z].x0;
         }
+        cur_y = ranges[cur_box][cur_z].y0;
     }
     return true;
 }
@@ -229,11 +259,16 @@ static bool advance()
 static void update_screen()
 {
     char text[96];
-    snprintf(text, sizeof(text), "%.4f, %.4f", center_lat, center_lon);
+    if (radius_index == ALL_US) {
+        strcpy(text, "United States");
+    } else {
+        snprintf(text, sizeof(text), "%.4f, %.4f", center_lat, center_lon);
+    }
     set_text(center_label, text);
+    lv_obj_set_state(detail_bm, LV_STATE_DISABLED, radius_index == ALL_US);  // the overview has one detail
 
     if (running) {
-        snprintf(text, sizeof(text), "%u of %u tiles  ·  %u new", (unsigned)done, (unsigned)total, (unsigned)saved);
+        snprintf(text, sizeof(text), "%u of %u tiles, %u new", (unsigned)done, (unsigned)total, (unsigned)saved);
         set_text(progress_label, text);
         lv_bar_set_value(progress_bar, total ? done * 100 / total : 0, LV_ANIM_OFF);
         set_text(start_label, "Stop");
@@ -244,13 +279,13 @@ static void update_screen()
     lv_obj_set_flag(progress_bar, LV_OBJ_FLAG_HIDDEN, !running);
 
     uint32_t n = running ? total : plan();
-    uint32_t mb = (n * TILE_KB + 1023) / 1024;
+    uint32_t mb = (n * (radius_index == ALL_US ? US_TILE_KB : TILE_KB) + 1023) / 1024;
     char free_text[32] = "";
     if (card_ready()) {
         uint64_t free_mb = (SD.totalBytes() - SD.usedBytes()) >> 20;
         snprintf(free_text, sizeof(free_text), ", %u MB free", (unsigned)free_mb);
     }
-    snprintf(text, sizeof(text), "Zoom %d-%d: %u tiles, about %u MB%s", MIN_ZOOM, max_zoom, (unsigned)n, (unsigned)mb, free_text);
+    snprintf(text, sizeof(text), "Zoom %d-%d: %u tiles, about %u MB%s", min_zoom, max_zoom, (unsigned)n, (unsigned)mb, free_text);
     set_text(estimate_label, text);
 }
 
@@ -277,12 +312,13 @@ static void start()
     total = plan();
     done = saved = failures = skipped = 0;
     error[0] = '\0';
-    cur_z = MIN_ZOOM;
-    cur_x = ranges[cur_z].x0;
-    cur_y = ranges[cur_z].y0 - 1;  // advance() moves to the first tile
+    cur_z = min_zoom;
+    cur_box = 0;
+    cur_x = ranges[0][cur_z].x0;
+    cur_y = ranges[0][cur_z].y0 - 1;  // advance() moves to the first tile
     running = true;
-    Serial.printf("Map download: %u tiles around %.4f, %.4f, zoom %d-%d\n", (unsigned)total, center_lat, center_lon, MIN_ZOOM,
-                  max_zoom);
+    Serial.printf("Map download: %u tiles %s, zoom %d-%d\n", (unsigned)total, radius_index == ALL_US ? "for the US" : "nearby",
+                  min_zoom, max_zoom);
     update_screen();
 }
 
@@ -299,7 +335,7 @@ static void choice_cb(lv_event_t *e)
 {
     lv_obj_t *bm = lv_event_get_target_obj(e);
     int index = lv_buttonmatrix_get_selected_button(bm);
-    if (running) {
+    if (running || index < 0) {
         return;
     }
     (bm == radius_bm ? radius_index : detail_index) = index;
@@ -334,6 +370,7 @@ static lv_obj_t *choices(lv_obj_t *parent, const char *title, const char *const 
     lv_obj_set_style_shadow_width(bm, 0, LV_PART_ITEMS);
     lv_obj_set_style_bg_color(bm, ORANGE, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(bm, lv_color_black(), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_opa(bm, LV_OPA_40, LV_STATE_DISABLED);  // Detail, for All US
     lv_obj_add_event_cb(bm, choice_cb, LV_EVENT_VALUE_CHANGED, NULL);
     ui_focusable(bm);
     return bm;
@@ -354,7 +391,7 @@ void map_download_init(lv_obj_t *map)
     lv_obj_t *cont = make_scroll_column(screen);
 
     center_label = add_value_row(cont, "Around");
-    radius_bm = choices(cont, "Area (radius)", RADIUS_MAP, radius_index);
+    radius_bm = choices(cont, "Area", RADIUS_MAP, radius_index);
     detail_bm = choices(cont, "Detail", DETAIL_MAP, detail_index);
     estimate_label = make_label(cont, "", &lv_font_montserrat_12, GRAY);
     start_label = lv_obj_get_child(make_wide_button(cont, "", true, start_cb, NULL), 0);
@@ -365,6 +402,7 @@ void map_download_init(lv_obj_t *map)
     lv_obj_set_style_bg_color(progress_bar, ORANGE, LV_PART_INDICATOR);
     progress_label = make_label(cont, "", &lv_font_montserrat_14, lv_color_white());
     lv_obj_t *note = make_label(cont, "USGS Topo maps (public domain, US only) over Wi-Fi to the SD card. "
+                                      "All US is a low-detail map of the whole country that fills in around your detailed areas. "
                                       "Tiles already on the card are skipped, so a stopped download picks up where it left off.",
                                 &lv_font_montserrat_12, GRAY);
     lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);

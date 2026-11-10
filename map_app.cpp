@@ -26,6 +26,9 @@ static const int TILE = 256;
 static const int COLS = 3, ROWS = 2;  // tile slots needed to cover the 320x240 screen at any offset
 // Decoded tiles kept in PSRAM (128 KB each): the 3x3 on screen plus the next zoom level in and out.
 static const int CACHE_TILES = 32;
+// Where a tile isn't on the card, the nearest one up to this many zoom levels out is blown up in
+// its place (say, a whole-US overview at zoom 8 under detailed tiles at 13-16).
+static const int MAX_OVERZOOM = 8;
 static const double MAX_LAT = 85.05112878;                  // web map projection limit
 static const lv_color_t BLUE = LV_COLOR_MAKE(0x21, 0x96, 0xF3);    // lv_palette_main(LV_PALETTE_BLUE)
 // Breadcrumb trail colors by activity; picked to stand out on topo maps and from the blue dot.
@@ -37,8 +40,9 @@ static const lv_color_t ACTIVITY_COLORS[ACT_COUNT] = {
     LV_COLOR_MAKE(0xD5, 0x00, 0xF9),  // cycling: purple
     LV_COLOR_MAKE(0xE5, 0x1C, 0x23),  // driving: red
 };
-static const lv_color_t PIN = LV_COLOR_MAKE(0xAB, 0x47, 0xBC);  // contacts: lv_palette_main(LV_PALETTE_PURPLE)
-static const int MAX_PINS = 12;
+static const lv_color_t PIN = LV_COLOR_MAKE(0xAB, 0x47, 0xBC);           // companions and other nodes: purple
+static const lv_color_t REPEATER_PIN = LV_COLOR_MAKE(0x00, 0xAC, 0xC1);  // repeaters: lv_palette_darken(CYAN, 1)
+static const int MAX_PINS = 24;  // pins on screen at once
 static const int PAN_STEP = 40;  // px per trackball step
 static const uint32_t TRAIL_GAP_S = 120;  // points further apart in time aren't joined
 static const int TRAIL_MIN_PX = 3;        // shorter steps are merged into the next one
@@ -47,6 +51,7 @@ static const int TRAIL_MIN_PX = 3;        // shorter steps are merged into the n
 struct Tile {
     int z = -1, x, y;
     uint32_t used;  // last use, for evicting the least recently used tile
+    bool blown_up;  // made from a lower zoom's tile, as this one isn't on the card
     lv_image_dsc_t dsc;
 };
 
@@ -60,10 +65,14 @@ struct Slot {
 
 static Preferences prefs;
 static lv_obj_t *home_screen, *screen, *layer, *trail, *marker, *zoom_label, *status_label, *locate_btn, *legend;
-// Contacts whose adverts carry a position, drawn as labeled pins.
+// MeshCore nodes whose adverts carry a position (companions, repeaters, room servers, sensors),
+// drawn as pins: a diamond for a repeater, a dot for the rest. Each pin shows whichever located
+// contact is in view, most recently heard first, with its name unless that would cover a pin placed
+// before it.
 static lv_obj_t *pins[MAX_PINS];
-static ContactSummary *contacts;  // MAX_CONTACTS
-static int pin_count;
+static int8_t pin_repeater[MAX_PINS];  // how each pin is styled: 1 repeater, 0 not, -1 not yet
+static ContactSummary *contacts;      // MAX_CONTACTS; the located ones first
+static int located_count;
 static Slot slots[COLS * ROWS];
 static Tile cache[CACHE_TILES];
 static uint32_t use_clock;
@@ -81,7 +90,7 @@ static struct {
     bool ok;
 } job;
 static TaskHandle_t decoder_task;
-static std::vector<int> zooms;  // zoom levels present on the card, ascending
+static std::vector<int> zooms;  // zoom levels offered: lowest to highest on the card, ascending
 static int zoom = -1;
 static double cx, cy;           // map center in world pixels at `zoom`
 static bool following = true;   // keep the map centered on the GPS position
@@ -256,12 +265,12 @@ static uint8_t *read_file(const char *path, size_t &len)
     return data;
 }
 
-// Least recently used cached tile that isn't on screen; its buffer is reused for the next tile.
-static Tile *pick_victim()
+// Least recently used cached tile that isn't on screen, being decoded, or `keep`.
+static Tile *pick_victim(const Tile *keep)
 {
     Tile *victim = NULL;
     for (Tile &t : cache) {
-        bool shown = false;
+        bool shown = &t == keep || (job.state != JOB_IDLE && &t == job.tile);
         for (Slot &s : slots) {
             shown |= s.tile == &t;
         }
@@ -272,33 +281,94 @@ static Tile *pick_victim()
     return victim;
 }
 
-static void show_tile(Slot &s, Tile *t);
+// A cache entry to fill: an evicted tile with its buffer, taken out of the cache (z = -1).
+static Tile *take_tile(const Tile *keep)
+{
+    Tile *t = pick_victim(keep);
+    if (t->dsc.data) {
+        lv_image_cache_drop(&t->dsc);
+    } else {
+        t->dsc.data = (const uint8_t *)lv_malloc(TILE * TILE * 2);
+        if (!t->dsc.data) {
+            return NULL;
+        }
+    }
+    t->z = -1;
+    t->blown_up = false;
+    return t;
+}
 
-// Completes a load: caches the tile and shows it in the slots waiting for it, or remembers that
-// it's missing so it isn't tried again.
+static void set_cached(Tile *t, int z, int x, int y)
+{
+    t->z = z;
+    t->x = x;
+    t->y = y;
+    t->used = ++use_clock;
+    t->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    t->dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    t->dsc.header.w = TILE;
+    t->dsc.header.h = TILE;
+    t->dsc.header.stride = TILE * 2;
+    t->dsc.data_size = TILE * TILE * 2;
+}
+
+// Makes tile (z, x, y) by enlarging its part of `from`, a tile `from_z - z` zoom levels out, with
+// bilinear smoothing.
+static Tile *blow_up(Tile *from, int z, int x, int y)
+{
+    Tile *t = take_tile(from);
+    if (!t) {
+        return NULL;
+    }
+    int k = z - from->z, n = TILE >> k;
+    int ox = (x & ((1 << k) - 1)) * n, oy = (y & ((1 << k) - 1)) * n;  // the part, in `from`
+    const uint16_t *src = (const uint16_t *)from->dsc.data;
+    uint16_t *dst = (uint16_t *)t->dsc.data;
+    // Source positions of the output pixels' centers, in 1/256 px, kept inside the tile.
+    auto sample = [&](int i, int origin, int &p0, int &p1, int &w) {
+        int pos = origin * 256 + (((2 * i + 1) * 256) >> (k + 1)) - 128;
+        pos = std::max(0, std::min((TILE - 1) * 256, pos));
+        p0 = pos >> 8;
+        p1 = std::min(p0 + 1, TILE - 1);
+        w = pos & 255;
+    };
+    static int x0s[TILE], x1s[TILE], wxs[TILE];  // static: too big for the loop task's stack
+    for (int i = 0; i < TILE; i++) {
+        sample(i, ox, x0s[i], x1s[i], wxs[i]);
+    }
+    for (int j = 0; j < TILE; j++) {
+        int y0, y1, wy;
+        sample(j, oy, y0, y1, wy);
+        const uint16_t *r0 = src + y0 * TILE, *r1 = src + y1 * TILE;
+        for (int i = 0; i < TILE; i++) {
+            uint16_t a = r0[x0s[i]], b = r0[x1s[i]], c = r1[x0s[i]], d = r1[x1s[i]];
+            int wx = wxs[i];
+            int wa = (256 - wx) * (256 - wy), wb = wx * (256 - wy), wc = (256 - wx) * wy, wd = wx * wy;
+            int red = ((a >> 11) * wa + (b >> 11) * wb + (c >> 11) * wc + (d >> 11) * wd) >> 16;
+            int green = (((a >> 5) & 63) * wa + ((b >> 5) & 63) * wb + ((c >> 5) & 63) * wc + ((d >> 5) & 63) * wd) >> 16;
+            int blue = ((a & 31) * wa + (b & 31) * wb + (c & 31) * wc + (d & 31) * wd) >> 16;
+            dst[j * TILE + i] = (red << 11) | (green << 5) | blue;
+        }
+    }
+    set_cached(t, z, x, y);
+    t->blown_up = true;
+    return t;
+}
+
+static void resolve(Slot &s);
+
+// Completes a load: caches the tile, or remembers that it's missing so it isn't tried again, and
+// updates the slots waiting for it (or for a tile it's blown up into).
 static void finish_load(Tile *t, int z, int x, int y, bool ok)
 {
     if (ok) {
-        t->z = z;
-        t->x = x;
-        t->y = y;
-        t->used = ++use_clock;
-        t->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-        t->dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-        t->dsc.header.w = TILE;
-        t->dsc.header.h = TILE;
-        t->dsc.header.stride = TILE * 2;
-        t->dsc.data_size = TILE * TILE * 2;
+        set_cached(t, z, x, y);
     } else {
         missing.push_back(tile_key(z, x, y));
     }
     for (Slot &s : slots) {
-        if (s.pending && s.z == z && s.x == x && s.y == y) {
-            if (ok) {
-                show_tile(s, t);
-            } else {
-                s.pending = false;
-            }
+        if (s.pending) {
+            resolve(s);
         }
     }
 }
@@ -307,21 +377,19 @@ static void finish_load(Tile *t, int z, int x, int y, bool ok)
 // lodepng allocates through LVGL, which only this task may use); JPEGs go to the decoder task.
 static void start_load(int z, int x, int y)
 {
-    Tile *t = pick_victim();
-    if (t->dsc.data) {
-        lv_image_cache_drop(&t->dsc);
-    } else {
-        t->dsc.data = (const uint8_t *)lv_malloc(TILE * TILE * 2);
-    }
-    t->z = -1;
     static const char *exts[] = {"png", "jpg"};
     for (const char *ext : exts) {
         char path[128];
         snprintf(path, sizeof(path), "%s/%d/%d/%d.%s", MAP_DIR, z, x, y, ext);
         size_t len;
-        uint8_t *data = t->dsc.data ? read_file(path, len) : NULL;
+        uint8_t *data = read_file(path, len);
         if (!data) {
             continue;
+        }
+        Tile *t = take_tile(NULL);  // only now, so a missing tile doesn't evict one
+        if (!t) {
+            lv_free(data);
+            return;
         }
         if (ext[0] == 'p') {
             bool ok = decode_png(data, len, (uint16_t *)t->dsc.data);
@@ -339,7 +407,7 @@ static void start_load(int z, int x, int y)
         xTaskNotifyGive(decoder_task);
         return;
     }
-    finish_load(t, z, x, y, false);
+    finish_load(NULL, z, x, y, false);
 }
 
 static void decoder_main(void *)
@@ -378,11 +446,46 @@ static void set_tile(Slot &s, int z, int x, int y)
         return;
     }
     lv_obj_remove_flag(s.box, LV_OBJ_FLAG_HIDDEN);
-    Tile *t = find_tile(z, x, y);
+    resolve(s);
+}
+
+// The tile a slot needs loaded from the card next: its own, or when that's missing, the nearest
+// lower zoom's tile covering it. False if none is left to try.
+static bool slot_target(const Slot &s, int &z, int &x, int &y)
+{
+    for (int k = 0; k <= MAX_OVERZOOM && s.z - k >= zooms.front(); k++) {
+        z = s.z - k;
+        x = s.x >> k;
+        y = s.y >> k;
+        if (!is_missing(z, x, y)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Shows the slot's tile if it's cached, or blows up the cached lower-zoom tile that stands in for
+// it; otherwise leaves the slot pending while there's a tile on the card left to try.
+static void resolve(Slot &s)
+{
+    int z, x, y;
+    s.pending = false;
+    Tile *t = find_tile(s.z, s.x, s.y);  // loaded, or blown up before
+    if (t) {
+        show_tile(s, t);
+        return;
+    }
+    if (!slot_target(s, z, x, y)) {
+        return;
+    }
+    t = find_tile(z, x, y);
+    if (t && z != s.z) {
+        t = blow_up(t, s.z, s.x, s.y);
+    }
     if (t) {
         show_tile(s, t);
     } else {
-        s.pending = !is_missing(z, x, y);
+        s.pending = true;
     }
 }
 
@@ -504,35 +607,57 @@ static void update_marker()
 static void refresh_pins()
 {
     int n = messenger_contacts(contacts, MAX_CONTACTS);
-    pin_count = 0;
-    for (int i = 0; i < n && pin_count < MAX_PINS; i++) {
+    located_count = 0;
+    for (int i = 0; i < n; i++) {
         if (contacts[i].has_location) {
-            contacts[pin_count++] = contacts[i];  // most recently heard first
-        }
-    }
-    for (int i = 0; i < MAX_PINS; i++) {
-        if (i < pin_count) {
-            set_text(lv_obj_get_child(pins[i], 1), contacts[i].name);
+            contacts[located_count++] = contacts[i];  // most recently heard first
         }
     }
 }
 
+static void style_pin(int i, const ContactSummary &c)
+{
+    int8_t repeater = c.type == CONTACT_REPEATER;
+    if (pin_repeater[i] != repeater) {
+        pin_repeater[i] = repeater;
+        lv_obj_t *dot = lv_obj_get_child(pins[i], 0);
+        lv_obj_set_style_bg_color(dot, repeater ? REPEATER_PIN : PIN, 0);
+        lv_obj_set_style_radius(dot, repeater ? 2 : LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_transform_rotation(dot, repeater ? 450 : 0, 0);  // a square on its corner
+    }
+    set_text(lv_obj_get_child(pins[i], 1), c.name);
+}
+
 static void place_pins()
 {
-    for (int i = 0; i < MAX_PINS; i++) {
+    lv_area_t placed[MAX_PINS];  // screen areas of the pins placed so far
+    int used = 0;
+    for (int i = 0; i < located_count && used < MAX_PINS && zoom >= 0; i++) {
         double x, y;
-        if (i >= pin_count || zoom < 0) {
-            lv_obj_add_flag(pins[i], LV_OBJ_FLAG_HIDDEN);
-            continue;
-        }
         project(contacts[i].lat, contacts[i].lon, zoom, x, y);
         int px = (int)lround(x - (cx - SCREEN_W / 2.0)), py = (int)lround(y - (cy - SCREEN_H / 2.0));
         if (px < -100 || px > SCREEN_W || py < -10 || py > SCREEN_H + 10) {
-            lv_obj_add_flag(pins[i], LV_OBJ_FLAG_HIDDEN);
             continue;
         }
-        lv_obj_set_pos(pins[i], px - 5, py - lv_obj_get_height(pins[i]) / 2);  // the dot on the spot
-        lv_obj_remove_flag(pins[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *pin = pins[used];
+        style_pin(used, contacts[i]);
+        lv_obj_set_pos(pin, px - 5, py - 8);  // the dot on the spot
+        lv_obj_t *name = lv_obj_get_child(pin, 1);
+        lv_obj_remove_flag(name, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(pin, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_update_layout(pin);
+        lv_obj_get_coords(pin, &placed[used]);
+        for (int j = 0; j < used; j++) {
+            if (lv_area_is_on(&placed[used], &placed[j])) {
+                lv_obj_add_flag(name, LV_OBJ_FLAG_HIDDEN);
+                lv_area_set_width(&placed[used], 10);  // just the dot
+                break;
+            }
+        }
+        used++;
+    }
+    for (int i = used; i < MAX_PINS; i++) {
+        lv_obj_add_flag(pins[i], LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -663,11 +788,12 @@ static bool next_tile(int &z, int &x, int &y)
     int best = INT32_MAX;
     for (Slot &s : slots) {
         int dx = lv_obj_get_x(s.box) + TILE / 2 - SCREEN_W / 2, dy = lv_obj_get_y(s.box) + TILE / 2 - SCREEN_H / 2;
-        if (s.pending && dx * dx + dy * dy < best) {
+        int sz, sx, sy;
+        if (s.pending && dx * dx + dy * dy < best && slot_target(s, sz, sx, sy) && !find_tile(sz, sx, sy)) {
             best = dx * dx + dy * dy;
-            z = s.z;
-            x = s.x;
-            y = s.y;
+            z = sz;
+            x = sx;
+            y = sy;
         }
     }
     if (best != INT32_MAX) {
@@ -888,7 +1014,7 @@ static void build_screen()
     for (int i = 0; i < MAX_PINS; i++) {
         pins[i] = lv_obj_create(screen);
         lv_obj_remove_style_all(pins[i]);
-        lv_obj_set_size(pins[i], LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+        lv_obj_set_size(pins[i], LV_SIZE_CONTENT, 16);  // fixed, so the dot stays put when the name hides
         lv_obj_set_flex_flow(pins[i], LV_FLEX_FLOW_ROW);
         lv_obj_set_flex_align(pins[i], LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_column(pins[i], 3, 0);
@@ -896,9 +1022,10 @@ static void build_screen()
         lv_obj_t *dot = lv_obj_create(pins[i]);
         lv_obj_remove_style_all(dot);
         lv_obj_set_size(dot, 10, 10);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(dot, PIN, 0);
+        lv_obj_set_style_transform_pivot_x(dot, LV_PCT(50), 0);
+        lv_obj_set_style_transform_pivot_y(dot, LV_PCT(50), 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        pin_repeater[i] = -1;  // style_pin() sets the shape and color
         lv_obj_set_style_border_color(dot, lv_color_white(), 0);
         lv_obj_set_style_border_width(dot, 2, 0);
         lv_obj_t *name = make_label(pins[i], "", &lv_font_montserrat_12, lv_color_white());
@@ -964,7 +1091,11 @@ void map_init(lv_obj_t *home)
 
 void map_open()
 {
-    zooms = list_numbers(MAP_DIR);
+    std::vector<int> on_card = list_numbers(MAP_DIR);
+    zooms.clear();
+    for (int z = on_card.empty() ? 0 : on_card.front(); !on_card.empty() && z <= on_card.back(); z++) {
+        zooms.push_back(z);  // levels in between show blown-up tiles
+    }
     if (zooms.empty()) {
         zoom = -1;
     } else {
@@ -975,12 +1106,21 @@ void map_open()
         if (!center_on_gps()) {
             if (prefs.isKey("lat")) {
                 project(prefs.getDouble("lat"), prefs.getDouble("lon"), zoom, cx, cy);
-            } else if (!tiles_center(zoom, cx, cy)) {
+            } else if (tiles_center(on_card.back(), cx, cy)) {
+                double scale = ldexp(1.0, zoom - on_card.back());
+                cx *= scale;
+                cy *= scale;
+            } else {
                 cx = cy = world_size(zoom) / 2;
             }
         }
     }
     missing.clear();  // the card may have changed; look the tiles up again
+    for (Tile &t : cache) {
+        if (t.blown_up) {
+            t.z = -1;  // the real tile may be there now
+        }
+    }
     for (Slot &s : slots) {
         s.z = -2;
     }

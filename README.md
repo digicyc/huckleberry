@@ -46,18 +46,27 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
   **This T-Deck** card sets the name others see (TDeck-XXXX by default) and whether your adverts
   include your GPS position. New messages chime (Settings can silence it) and show a banner over
   any app. Direct messages show Sent / Delivered / Failed. Chats are kept on the FFat partition.
+  Emoji in messages and names show in colour: every single emoji in Noto Color Emoji, with skin
+  tones drawn in the default yellow, flags as their two letters, and combined emoji (👨‍🌾) as their
+  parts (👨🌾). `tools/make_emoji.py` generates them into `emoji_glyphs.c`.
 - **Bluetooth** lets the MeshCore iPhone app use the T-Deck as its radio. It shows the name the app
   lists (**MeshCore-** plus the node name) and the six-digit PIN: in the app tap Connect, pick the
   T-Deck and enter the PIN. Channels and contacts are shared with the app; channels you add in the
   app appear in Messages within a couple of seconds, and messages sent from the phone show in the
   chats here.
-- **Map** shows offline tiles from the SD card with your position as a blue dot and contacts that
-  share their location as purple pins. The trackball pans; Enter, `+` or `i` zooms in, `-` or `o`
-  zooms out, space or `c` re-centers, and `d` (or the download button) opens **Download map**: pick
-  a radius (2-25 km) and detail (zoom 13-16) around the map's center, and it fetches USGS Topo tiles
-  (public domain, US only) over Wi-Fi into `/maps/<z>/<x>/<y>.jpg`, skipping tiles already on the
-  card. `tools/download_map_tiles.py` does the same from a computer for bigger areas. Today's GPS
-  track is drawn as a trail colored by activity.
+- **Map** shows offline tiles from the SD card with your position as a blue dot and the MeshCore
+  nodes whose adverts carry a position: repeaters as cyan diamonds, companions and other nodes as
+  purple dots, labeled with their names where the labels don't overlap. The trackball pans; Enter,
+  `+` or `i` zooms in, `-` or `o` zooms out, space or `c` re-centers, and `d` (or the download
+  button) opens **Download map**: pick a radius (2-25 km) and detail (zoom 13-16) around the map's
+  center, and it fetches USGS Topo tiles (public domain, US only) over Wi-Fi into
+  `/maps/<z>/<x>/<y>.jpg`, skipping tiles already on the card. **All US** instead fetches a
+  low-detail map of the whole country (lower 48, Alaska, Hawaii, Puerto Rico; zoom 3-8, about
+  2,750 tiles and 35-40 MB, roughly 25 minutes). Wherever a tile isn't on the card, the map enlarges
+  the nearest lower-zoom one (up to 8 levels out), so with All US on the card it's never blank:
+  detailed tiles where you downloaded them, a blurrier overview everywhere else.
+  `tools/download_map_tiles.py` does the same from a computer for bigger areas (`--us-overview`
+  for All US). Today's GPS track is drawn as a trail colored by activity.
 - **GPS**: on/off switch, position, altitude, speed, HDOP, and signal bars per satellite. A fix sets
   the clock and feeds your position to MeshCore. **Record track** saves a point every 10 m to
   `/tracks/YYYY-MM-DD.csv` on the card, labeled walking/running/cycling/driving from your speed (the
@@ -78,9 +87,9 @@ The T-Deck has no RTC, so after a reboot the clock reads `--:--` until GPS, Wi-F
 ## Testing over USB serial
 
 The firmware takes one-line commands on the USB serial port (115200): `T<unix time>` sets the clock,
-`S` sends a screenshot (what `tools/screenshot.py` reads), `K<text>` types (`\n` Enter, `\b`
-Backspace, `\e` the mic key), `B<dx>,<dy>` rolls the trackball, `C` / `L` click / hold it, and
-`P<x>,<y>` taps the screen. Don't change DTR or RTS on the port: that resets the ESP32-S3.
+`S` sends a screenshot (what `tools/screenshot.py` reads), `K<text>` types UTF-8 text, emoji
+included (`\n` Enter, `\b` Backspace, `\e` the mic key), `B<dx>,<dy>` rolls the trackball, `C` /
+`L` click / hold it, and `P<x>,<y>` taps the screen. Don't change DTR or RTS on the port: that resets the ESP32-S3.
 
 ## MeshCore
 

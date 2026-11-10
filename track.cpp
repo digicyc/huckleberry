@@ -1,5 +1,6 @@
 #include "track.h"
 #include <LilyGoLib.h>
+#include <lvgl.h>
 #include <Preferences.h>
 #include <math.h>
 #include <stdio.h>
@@ -82,9 +83,18 @@ static void load_day()
     fclose(f);
 }
 
-static void save_point(double lat, double lon, uint32_t time)
+// Points wait here as CSV lines and are appended to the card together, once the screen has been left
+// alone for a few seconds (or after two minutes, or when this fills): each write to the card stalls
+// the screen for about 0.2 s, which made scrolling stutter every few seconds while moving.
+static char pending[2048];
+static size_t pending_len;
+static uint32_t pending_since;  // millis of the oldest pending point
+
+static void write_pending()
 {
-    if (!card_ready()) {
+    size_t len = pending_len;
+    pending_len = 0;
+    if (!len || !card_ready()) {
         return;  // kept in memory only
     }
     mkdir(TRACK_DIR, 0777);
@@ -99,8 +109,20 @@ static void save_point(double lat, double lon, uint32_t time)
     if (is_new) {
         fputs("time,lat,lon,activity\n", f);
     }
-    fprintf(f, "%lu,%.6f,%.6f,%c\n", (unsigned long)time, lat, lon, ACTIVITY_CODES[activity]);
+    fwrite(pending, 1, len, f);
     fclose(f);
+}
+
+static void save_point(double lat, double lon, uint32_t time)
+{
+    if (sizeof(pending) - pending_len < 64) {
+        write_pending();
+    }
+    if (!pending_len) {
+        pending_since = millis();
+    }
+    pending_len += snprintf(pending + pending_len, sizeof(pending) - pending_len, "%lu,%.6f,%.6f,%c\n",
+                            (unsigned long)time, lat, lon, ACTIVITY_CODES[activity]);
 }
 
 // Distance in meters; an equirectangular approximation is plenty for 10 m steps.
@@ -146,6 +168,9 @@ void track_init()
 void track_tick()
 {
     update_activity();
+    if (pending_len && (lv_display_get_inactive_time(NULL) > 3000 || millis() - pending_since > 120000)) {
+        write_pending();
+    }
 
     static uint32_t last_tick;
     if (millis() - last_tick < TICK_MS) {
@@ -162,6 +187,7 @@ void track_tick()
     char today[11];
     strftime(today, sizeof(today), "%Y-%m-%d", &local);
     if (strcmp(today, day) != 0) {
+        write_pending();  // to the day's file it belongs to
         strcpy(day, today);  // a new day starts a new track
         load_day();
     }

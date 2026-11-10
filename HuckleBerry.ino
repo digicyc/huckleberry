@@ -7,8 +7,8 @@
 // `make settime`, which sends "T<unix seconds>\n" over USB serial. The system clock keeps UTC.
 //
 // USB serial also takes test commands, one per line: S (screenshot, read by tools/screenshot.py),
-// K<text> (type; \n Enter, \b Backspace, \e the mic key, \\ a backslash), B<dx>,<dy> (roll the
-// trackball), C and L (click and hold the trackball), P<x>,<y> (tap the screen).
+// K<text> (type UTF-8 text; \n Enter, \b Backspace, \e the mic key, \\ a backslash), B<dx>,<dy>
+// (roll the trackball), C and L (click and hold the trackball), P<x>,<y> (tap the screen).
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
 #include <initializer_list>
@@ -393,6 +393,12 @@ static void type_text(const char *s)
         if (*s == '\\' && s[1]) {
             s++;
             key = *s == 'n' ? '\n' : *s == 'b' ? '\b' : *s == 'e' ? KEY_MIC : (uint8_t)*s;
+        } else if (key >= 0xC0) {
+            // A multi-byte UTF-8 character (an emoji, say): LVGL takes its bytes packed in one key.
+            size_t n = key >= 0xF0 ? 4 : key >= 0xE0 ? 3 : 2;
+            key = 0;
+            memcpy(&key, s, strnlen(s, n));
+            s += strnlen(s, n) - 1;
         }
         ui_inject_key(key);
         // LVGL reads a key press and its release in two input reads, one per refresh period.

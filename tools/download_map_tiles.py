@@ -13,6 +13,11 @@ Examples:
     # A bounding box (west,south,east,north):
     python3 tools/download_map_tiles.py --bbox -105.05,39.70,-104.95,39.78 --zoom 12-15 --url '...'
 
+    # A low-detail map of the whole US (lower 48, Alaska, Hawaii, Puerto Rico; zoom 3-8 unless
+    # --zoom says otherwise: about 2,750 tiles, 35-40 MB), which the Map app blows up wherever
+    # there are no detailed tiles:
+    python3 tools/download_map_tiles.py --us-overview --url '...'
+
 Respect the tile provider's terms. Most commercial providers forbid bulk downloading on their free
 plans (MapTiler Cloud outright; Thunderforest below its Small Business plan), and the OpenStreetMap
 Foundation's servers (tile.openstreetmap.org) forbid it and block tools like this one (they return
@@ -28,6 +33,9 @@ import urllib.error
 import urllib.request
 
 OSM_HOST = "tile.openstreetmap.org"
+# West, south, east, north; the same boxes as the T-Deck's "All US" download.
+US_BOXES = [(-125.0, 24.4, -66.9, 49.4), (-170.0, 51.0, -129.9, 71.5), (-160.5, 18.8, -154.7, 22.3),
+            (-67.3, 17.9, -65.2, 18.6)]
 USER_AGENT = "WatchApp-map-tiles/1.0 (T-Watch Ultra offline map)"
 
 
@@ -53,27 +61,35 @@ def main():
     area = p.add_mutually_exclusive_group(required=True)
     area.add_argument("--bbox", help="west,south,east,north in degrees")
     area.add_argument("--center", help="lat,lon in degrees (use with --radius-km)")
+    area.add_argument("--us-overview", action="store_true", help="the whole US at low detail (zoom 3-8)")
     p.add_argument("--radius-km", type=float, default=3.0)
-    p.add_argument("--zoom", type=parse_zoom, required=True, help="zoom level or range, e.g. 12-16")
+    p.add_argument("--zoom", type=parse_zoom, help="zoom level or range, e.g. 12-16 (3-8 for --us-overview)")
     p.add_argument("--url", required=True, help="tile URL template with {z}, {x}, {y}")
     p.add_argument("--out", default="maps", help="output folder (default: maps)")
     p.add_argument("--delay", type=float, default=0.1, help="seconds between requests")
     p.add_argument("--yes", action="store_true", help="don't ask before downloading")
     args = p.parse_args()
 
-    if args.bbox:
-        west, south, east, north = (float(v) for v in args.bbox.split(","))
+    if args.us_overview:
+        boxes = US_BOXES
+        args.zoom = args.zoom or range(3, 9)
+    elif args.bbox:
+        boxes = [tuple(float(v) for v in args.bbox.split(","))]
     else:
         lat, lon = (float(v) for v in args.center.split(","))
         dlat = args.radius_km / 111.32
         dlon = args.radius_km / (111.32 * max(0.01, math.cos(math.radians(lat))))
-        west, south, east, north = lon - dlon, lat - dlat, lon + dlon, lat + dlat
+        boxes = [(lon - dlon, lat - dlat, lon + dlon, lat + dlat)]
+    if not args.zoom:
+        p.error("--zoom is required")
 
     tiles = []
     for z in args.zoom:
-        x0, y0 = tile_xy(north, west, z)
-        x1, y1 = tile_xy(south, east, z)
-        tiles += [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+        for west, south, east, north in boxes:
+            x0, y0 = tile_xy(north, west, z)
+            x1, y1 = tile_xy(south, east, z)
+            tiles += [(z, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+    tiles = list(dict.fromkeys(tiles))  # boxes share tiles at low zoom
 
     if OSM_HOST in args.url:
         sys.exit(f"{OSM_HOST} forbids offline downloads and blocks this tool; use a provider that allows "
