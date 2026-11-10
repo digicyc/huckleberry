@@ -1,6 +1,7 @@
 #include "settings_app.h"
 #include "ui.h"
 #include "keyboard.h"
+#include "version.h"
 #include <LilyGoLib.h>
 #include <Preferences.h>
 
@@ -160,7 +161,7 @@ void settings_init(lv_obj_t *home)
     add_switch_row(cont, "Keyboard light", "While the screen is on", keyboard_light, keyboard_cb);
 
     battery_label = add_value_row(cont, "Battery");
-    lv_obj_t *about = make_label(cont, "HuckleBerry for LilyGo T-Deck", &lv_font_montserrat_12, GRAY);
+    lv_obj_t *about = make_label(cont, "HuckleBerry " HUCKLEBERRY_VERSION " for LilyGo T-Deck", &lv_font_montserrat_12, GRAY);
     lv_obj_set_style_margin_top(about, 4, 0);
 
     lv_timer_create([](lv_timer_t *) {

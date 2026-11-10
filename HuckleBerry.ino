@@ -25,6 +25,7 @@
 #include "settings_app.h"
 #include "sound.h"
 #include "ui.h"
+#include "version.h"
 #include "weather_app.h"
 #include "wifi_app.h"
 
@@ -34,6 +35,7 @@ static const lv_color_t GREEN = LV_COLOR_MAKE(0x4C, 0xAF, 0x50);  // lv_palette_
 static const lv_color_t RED = LV_COLOR_MAKE(0xF4, 0x43, 0x36);    // lv_palette_main(LV_PALETTE_RED)
 static const lv_color_t BLUE = LV_COLOR_MAKE(0x21, 0x96, 0xF3);   // lv_palette_main(LV_PALETTE_BLUE)
 
+LV_IMAGE_DECLARE(huckleberry_logo);
 LV_IMAGE_DECLARE(satellite_icon);
 LV_IMAGE_DECLARE(weather_app_icon);
 LV_IMAGE_DECLARE(wifi_icon_1);
@@ -41,13 +43,14 @@ LV_IMAGE_DECLARE(wifi_icon_2);
 LV_IMAGE_DECLARE(wifi_icon_3);
 LV_IMAGE_DECLARE(wifi_icon_4);
 
+static lv_obj_t *boot_screen;  // until it's tapped
 static lv_obj_t *home_screen;
 static lv_obj_t *time_label, *ampm_label, *weekday_label, *date_label;
 static lv_obj_t *weather_box, *weather_icon, *weather_label;  // conditions and temperature, under the date
 static lv_obj_t *unread_badge;                                // on the Messages icon
 
-// Status bar, on the top layer so it shows over every screen.
-static lv_obj_t *bar_time, *bar_mail, *bar_bt, *bar_wifi, *bar_gps, *bar_gps_icon, *bar_gps_label, *bar_battery;
+// Status bar, on the top layer so it shows over every screen but the boot screen.
+static lv_obj_t *status_bar, *bar_time, *bar_mail, *bar_bt, *bar_wifi, *bar_gps, *bar_gps_icon, *bar_gps_label, *bar_battery;
 static lv_timer_t *status_timer;
 
 static bool screen_on = true;
@@ -209,10 +212,52 @@ static void update_screen_power()
 // Returns to the home screen from any app (holding the trackball down).
 static void show_home()
 {
-    if (alarms_ringing() || lv_screen_active() == home_screen) {
+    if (alarms_ringing() || lv_screen_active() == home_screen || boot_screen) {
         return;
     }
     lv_screen_load_anim(home_screen, LV_SCREEN_LOAD_ANIM_FADE_IN, 150, 0, false);
+}
+
+// ---------- Boot screen ----------
+
+// The logo, name and version, shown from power-on, while the apps start, until the screen is tapped.
+static void build_boot_screen()
+{
+    boot_screen = make_screen();
+
+    lv_obj_t *logo = lv_image_create(boot_screen);
+    lv_image_set_src(logo, &huckleberry_logo);
+    lv_obj_align(logo, LV_ALIGN_TOP_MID, 0, 18);
+
+    lv_obj_t *name = make_label(boot_screen, "Huckle#B388FF Berry#", &lv_font_montserrat_28, lv_color_white());
+    lv_label_set_recolor(name, true);
+    lv_obj_align_to(name, logo, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+    lv_obj_t *version = make_label(boot_screen, "Version " HUCKLEBERRY_VERSION, &lv_font_montserrat_14, GRAY);
+    lv_obj_align_to(version, name, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
+
+    lv_obj_t *hint = make_label(boot_screen, "Tap the screen to start", &lv_font_montserrat_12, ORANGE);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_anim_t pulse;
+    lv_anim_init(&pulse);
+    lv_anim_set_var(&pulse, hint);
+    lv_anim_set_values(&pulse, LV_OPA_COVER, LV_OPA_30);
+    lv_anim_set_duration(&pulse, 1200);
+    lv_anim_set_reverse_duration(&pulse, 1200);
+    lv_anim_set_repeat_count(&pulse, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_exec_cb(&pulse, [](void *obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)obj, v, 0); });
+    lv_anim_start(&pulse);
+
+    lv_obj_add_event_cb(boot_screen, [](lv_event_t *) {
+        lv_screen_load_anim(home_screen, LV_SCREEN_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }, LV_EVENT_CLICKED, NULL);
+    // An alarm or a message banner can also leave it.
+    lv_obj_add_event_cb(boot_screen, [](lv_event_t *) {
+        boot_screen = NULL;
+        lv_obj_remove_flag(status_bar, LV_OBJ_FLAG_HIDDEN);
+    }, LV_EVENT_SCREEN_UNLOAD_START, NULL);
+    lv_obj_add_event_cb(boot_screen, [](lv_event_t *e) {
+        lv_obj_delete_async((lv_obj_t *)lv_event_get_target(e));
+    }, LV_EVENT_SCREEN_UNLOADED, NULL);
 }
 
 // ---------- Home screen ----------
@@ -316,7 +361,7 @@ static void build_home()
 
 static void build_status_bar()
 {
-    lv_obj_t *bar = lv_obj_create(lv_layer_top());
+    lv_obj_t *bar = status_bar = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(bar);
     lv_obj_set_size(bar, SCREEN_W, STATUS_H);
     lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
@@ -475,9 +520,15 @@ void setup()
                                                         &lv_font_montserrat_16));
     ui_input_init(show_home);
 
+    // The boot screen shows while the rest starts; the backlight is off until then.
+    build_boot_screen();
+    lv_screen_load(boot_screen);
     build_home();
-    lv_screen_load(home_screen);
+    settings_init(home_screen);  // for the backlight level
+    lv_refr_now(NULL);
+    instance.setBrightness(settings_brightness());
     build_status_bar();
+    lv_obj_add_flag(status_bar, LV_OBJ_FLAG_HIDDEN);
 
     sdcard_init(home_screen);
     wifi_init(home_screen);
@@ -489,7 +540,6 @@ void setup()
     }
     messages_init(home_screen);
     bluetooth_init(home_screen);
-    settings_init(home_screen);
     alarms_init(home_screen);
     sound_init();
 
@@ -502,9 +552,8 @@ void setup()
 
     update_status(NULL);
     status_timer = lv_timer_create(update_status, 1000, NULL);
-    instance.setBrightness(settings_brightness());
     keyboard_set_light(settings_keyboard_light());
-    Serial.printf("HuckleBerry started in %lu ms\n", millis());
+    Serial.printf("HuckleBerry " HUCKLEBERRY_VERSION " started in %lu ms\n", millis());
 }
 
 void loop()

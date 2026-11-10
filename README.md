@@ -21,6 +21,10 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
 
 ## Using it
 
+- **Boot screen.** At power-on the HuckleBerry logo and version show while the apps start, and
+  stay until you tap the screen. The version is in `version.h` (also shown at the bottom of
+  Settings). The logo is `tools/logo.png`; `uv run tools/make_logo.py > logo.c` regenerates the
+  firmware's copy.
 - **Keyboard and trackball.** Typing goes into the screen's text field; Enter sends or presses.
   Hold **Shift** for capitals and **Sym** for the symbols printed on the keys; **Shift + $** types
   `&`, which isn't on any key. Backspace goes back when there's no text to delete. The keyboard's
