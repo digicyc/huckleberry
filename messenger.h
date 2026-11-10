@@ -55,6 +55,7 @@ void messenger_loop();
 int messenger_chats(int *ids, int max);
 bool messenger_chat_summary(int chat, ChatSummary &out);
 int messenger_message_count(int chat);
+uint32_t messenger_message_total(int chat);  // messages ever added (count stops at the newest 60)
 const ChatMessage *messenger_message(int chat, int index);  // 0 = oldest
 bool messenger_send(int chat, const char *text);
 int messenger_max_text(int chat);  // longest message that fits

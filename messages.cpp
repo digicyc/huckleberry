@@ -14,6 +14,7 @@ static const int MAX_LISTED_CONTACTS = 128;  // MAX_CONTACTS
 static const uint32_t BANNER_MS = 4000;
 static const lv_color_t RED = LV_COLOR_MAKE(0xF4, 0x43, 0x36);  // lv_palette_main(LV_PALETTE_RED)
 static const int COMPOSE_H = 36;
+static const int CHAT_SHOWN = 20;  // newest messages built when a chat opens; building all 60 took 0.7 s
 
 static lv_obj_t *home_screen;
 static lv_obj_t *list_screen, *list_cont;
@@ -27,6 +28,12 @@ static lv_obj_t *banner, *banner_title, *banner_text;
 static lv_timer_t *banner_timer;
 static int banner_chat = -1;
 static int open_chat = -1;  // chat shown on chat_screen and info_screen
+// The chat view's bubbles are the newest shown_count messages as of shown_total (messenger's count
+// of messages ever added), after the "Show earlier" button if there is one.
+static int shown_count;
+static uint32_t shown_total;
+static bool shown_all;
+static lv_obj_t *earlier_button;
 static ContactSummary *contacts;  // MAX_LISTED_CONTACTS, for new_screen
 
 static void open_chat_view(int chat);
@@ -210,6 +217,17 @@ static const char *status_text(uint8_t status)
     return "";
 }
 
+// The line under a bubble: the time, and for our own messages the delivery status.
+static void format_meta(const ChatMessage &m, char *meta, size_t size)
+{
+    const char *when = format_time(m.time);
+    if (m.status != MSG_RECEIVED) {
+        snprintf(meta, size, "%s%s%s", when, when[0] ? "  " : "", status_text(m.status));
+    } else {
+        strlcpy(meta, when, size);
+    }
+}
+
 static void add_bubble(const ChatMessage &m, bool is_channel)
 {
     bool mine = m.status != MSG_RECEIVED;
@@ -241,16 +259,33 @@ static void add_bubble(const ChatMessage &m, bool is_channel)
     lv_obj_set_style_max_width(text, 220, 0);
 
     char meta[48];
-    const char *when = format_time(m.time);
-    if (mine) {
-        snprintf(meta, sizeof(meta), "%s%s%s", when, when[0] ? "  " : "", status_text(m.status));
-    } else {
-        strlcpy(meta, when, sizeof(meta));
-    }
+    format_meta(m, meta, sizeof(meta));
     if (meta[0]) {
         lv_obj_t *label = make_label(item, meta, &lv_font_montserrat_12, m.status == MSG_FAILED ? RED : GRAY);
         lv_obj_set_style_margin_hor(label, 8, 0);
+        lv_obj_set_user_data(item, label);  // for update_chat() to show Delivered, say
     }
+}
+
+static void rebuild_chat();
+
+static void earlier_cb(lv_event_t *)
+{
+    // After this event: rebuilding deletes the button.
+    lv_async_call([](void *) {
+        int first = messenger_message_count(open_chat) - shown_count;  // the oldest message shown now
+        shown_all = true;
+        rebuild_chat();
+        lv_obj_update_layout(chat_cont);
+        if (lv_obj_t *oldest = lv_obj_get_child(chat_cont, first)) {
+            lv_obj_scroll_to_view(oldest, LV_ANIM_OFF);
+        }
+    }, NULL);
+}
+
+static void add_earlier_button()
+{
+    earlier_button = make_wide_button(chat_cont, "Show earlier messages", false, earlier_cb, NULL);
 }
 
 static void rebuild_chat()
@@ -272,7 +307,13 @@ static void rebuild_chat()
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_margin_top(empty, 40, 0);
     }
-    for (int i = 0; i < count; i++) {
+    shown_count = shown_all || count < CHAT_SHOWN ? count : CHAT_SHOWN;
+    shown_total = messenger_message_total(open_chat);
+    earlier_button = NULL;
+    if (count > shown_count) {
+        add_earlier_button();
+    }
+    for (int i = count - shown_count; i < count; i++) {
         const ChatMessage *m = messenger_message(open_chat, i);
         if (m) {
             add_bubble(*m, s.is_channel);
@@ -282,6 +323,52 @@ static void rebuild_chat()
     lv_obj_scroll_to_y(chat_cont, LV_COORD_MAX, LV_ANIM_OFF);
 }
 
+// Brings the open chat's view up to date, adding just the new bubbles when it can.
+static void update_chat()
+{
+    ChatSummary s;
+    uint32_t total = messenger_message_total(open_chat);
+    int count = messenger_message_count(open_chat);
+    int added = (int)(total - shown_total);
+    if (!messenger_chat_summary(open_chat, s) || shown_count == 0 || added < 0 || added > CHAT_SHOWN) {
+        rebuild_chat();
+        return;
+    }
+    lv_label_set_text(chat_title, s.name);
+    bool at_bottom = lv_obj_get_scroll_bottom(chat_cont) < 20;
+    for (int i = count - added; i < count; i++) {
+        add_bubble(*messenger_message(open_chat, i), s.is_channel);
+    }
+    shown_count += added;
+    shown_total = total;
+    // Drop the oldest bubbles past the window, or past what the messenger still keeps.
+    int keep = shown_all ? count : CHAT_SHOWN;
+    while (shown_count > keep) {
+        lv_obj_delete(lv_obj_get_child(chat_cont, earlier_button ? 1 : 0));
+        shown_count--;
+    }
+    if (!earlier_button && count > shown_count) {
+        add_earlier_button();
+        lv_obj_move_to_index(earlier_button, 0);
+    }
+    // Our recent messages' Sending... / Delivered / Failed.
+    int first = earlier_button ? 1 : 0;
+    for (int j = shown_count - 1; j >= 0 && j >= shown_count - 8; j--) {
+        const ChatMessage *m = messenger_message(open_chat, count - shown_count + j);
+        lv_obj_t *meta = (lv_obj_t *)lv_obj_get_user_data(lv_obj_get_child(chat_cont, first + j));
+        if (m && meta && m->status != MSG_RECEIVED) {
+            char text[48];
+            format_meta(*m, text, sizeof(text));
+            set_text(meta, text);
+            lv_obj_set_style_text_color(meta, m->status == MSG_FAILED ? RED : GRAY, 0);
+        }
+    }
+    if (at_bottom) {
+        lv_obj_update_layout(chat_cont);
+        lv_obj_scroll_to_y(chat_cont, LV_COORD_MAX, LV_ANIM_OFF);
+    }
+}
+
 static void open_chat_view(int chat)
 {
     ChatSummary s;
@@ -289,6 +376,7 @@ static void open_chat_view(int chat)
         return;
     }
     open_chat = chat;
+    shown_all = false;
     messenger_mark_read(chat);
     lv_textarea_set_text(compose_ta, "");
     lv_textarea_set_max_length(compose_ta, messenger_max_text(chat));
@@ -847,7 +935,7 @@ static void messenger_changed(int chat, bool incoming)
             if (viewing) {
                 messenger_mark_read(chat);
             }
-            rebuild_chat();
+            update_chat();
         }
     }
     rebuild_list();

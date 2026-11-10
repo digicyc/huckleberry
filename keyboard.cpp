@@ -33,7 +33,7 @@ static bool is_enter(int c, int r) { return c == 3 && r == 3; }
 static bool is_backspace(int c, int r) { return c == 4 && r == 3; }
 
 static QueueHandle_t keys;
-static volatile int light_wanted = -1;  // set by keyboard_set_light(), sent by the task
+static int light_wanted = -1;  // set by keyboard_set_light(), sent by poll()
 static int light_sent = -1;
 static bool online, key_mode;
 static int errors;
@@ -218,43 +218,44 @@ static void poll_key_mode()
     key_mode_char(Wire.read());
 }
 
-static void keyboard_task(void *)
+// One poll, at most every POLL_MS (or every 500 ms while the keyboard doesn't answer).
+static void poll()
 {
-    for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+    static uint32_t next_at;
+    if ((int32_t)(millis() - next_at) < 0) {
+        return;
+    }
+    next_at = millis() + POLL_MS;
+    if (!online) {
+        // Also waits out the keyboard's own boot.
+        online = send(key_mode ? CMD_KEY_MODE : CMD_RAW_MODE);
+        errors = 0;
+        light_sent = -1;
         if (!online) {
-            // Also waits out the keyboard's own boot.
-            online = send(key_mode ? CMD_KEY_MODE : CMD_RAW_MODE);
-            errors = 0;
-            light_sent = -1;
-            if (!online) {
-                vTaskDelay(pdMS_TO_TICKS(500));
-                continue;
-            }
-            Serial.println("Keyboard ready");
+            next_at = millis() + 500;
+            return;
         }
-        int light = light_wanted;
-        if (light >= 0 && light != light_sent && send(CMD_LIGHT, light)) {
-            light_sent = light;
-        }
-        if (key_mode) {
-            poll_key_mode();
-        } else {
-            poll_raw();
-            repeat();
-        }
+        Serial.println("Keyboard ready");
+    }
+    if (light_wanted >= 0 && light_wanted != light_sent && send(CMD_LIGHT, light_wanted)) {
+        light_sent = light_wanted;
+    }
+    if (key_mode) {
+        poll_key_mode();
+    } else {
+        poll_raw();
+        repeat();
     }
 }
 
 void keyboard_begin()
 {
     keys = xQueueCreate(32, sizeof(uint32_t));
-    // Above the main loop on its core, so redraws don't delay polling.
-    xTaskCreatePinnedToCore(keyboard_task, "keyboard", 3072, NULL, 2, NULL, 1);
 }
 
 bool keyboard_read(uint32_t &key)
 {
+    poll();
     return xQueueReceive(keys, &key, 0) == pdTRUE;
 }
 

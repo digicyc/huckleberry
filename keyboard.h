@@ -1,5 +1,6 @@
-// The T-Deck's keyboard: an ESP32-C3 on I2C (0x55) that scans the key matrix. A task polls it every
-// 10 ms, apart from the screen's redraws, so quick taps aren't missed.
+// The T-Deck's keyboard: an ESP32-C3 on I2C (0x55) that scans the key matrix. keyboard_read() polls
+// it, at most every 10 ms, from the main loop: the touch screen shares the I2C bus, and touch reads
+// stalled for a second at a time while a separate keyboard task used the bus.
 //
 // With C3 firmware from June 2025 or later, which reports the key matrix: Shift and Sym work held
 // down or tapped first (a tap applies to the next key), holding Backspace repeats it, Mic is back
@@ -12,10 +13,11 @@
 
 static const uint32_t KEY_MIC = 0xF0;
 
-// Starts the polling task; call after Wire is started (instance.begin()).
+// Call after Wire is started (instance.begin()).
 void keyboard_begin();
 
-// The next key typed, if any: a printable character, '\n' (Enter), '\b' (Backspace) or KEY_MIC.
+// Polls the keyboard (call every loop) and returns the next key typed, if any: a printable
+// character, '\n' (Enter), '\b' (Backspace) or KEY_MIC.
 bool keyboard_read(uint32_t &key);
 
 // Keyboard backlight, 0 (off) to 255.

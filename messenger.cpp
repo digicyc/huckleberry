@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <esp_random.h>
 #include <sys/time.h>
+#include <lvgl.h>
 #include <MeshCore.h>  // lets arduino-cli find the MeshCore library for the helpers/ includes
 #include <companion_radio/MyMesh.h>
 
@@ -32,6 +33,7 @@ struct Chat {
     uint8_t unread;
     uint32_t last_activity;
     uint32_t total;  // messages ever added; message n is msgs[n % MAX_MESSAGES]
+    bool dirty;      // changed since its file was written
     ChatMessage msgs[MAX_MESSAGES];
 };
 
@@ -74,8 +76,12 @@ uint16_t DeckBoard::getBattMilliVolts()
     return instance.getBattVoltage();
 }
 
+static bool write_dirty_chat();
+
 void DeckBoard::reboot()
 {
+    while (write_dirty_chat()) {
+    }
     esp_restart();
 }
 
@@ -136,8 +142,23 @@ static void chat_path(int chat, char *path)
             k[4], k[5]);
 }
 
+// Writing a chat file takes about half a second (FFat's wear levelling erases flash), which froze the
+// screen when it happened on every message. So changes mark the chat dirty, and messenger_loop()
+// writes dirty chats once the screen has been left alone for a few seconds, or after a minute.
+static const uint32_t SAVE_IDLE_MS = 3000, SAVE_MAX_DELAY_MS = 60000;
+static uint32_t dirty_since;  // millis of the oldest unwritten change; 0 if none
+
 static void save_chat(int chat)
 {
+    chats[chat].dirty = true;
+    if (!dirty_since) {
+        dirty_since = millis() | 1;
+    }
+}
+
+static void write_chat(int chat)
+{
+    chats[chat].dirty = false;
     char path[48];
     chat_path(chat, path);
     File f = FFat.open(path, "w", true);
@@ -515,8 +536,25 @@ bool messenger_init()
     return true;
 }
 
+// Writes one dirty chat's file; false if none was dirty.
+static bool write_dirty_chat()
+{
+    for (int i = 0; i < MAX_CHATS; i++) {
+        if (chats[i].used && chats[i].dirty) {
+            write_chat(i);
+            return true;
+        }
+    }
+    dirty_since = 0;
+    return false;
+}
+
 void messenger_loop()
 {
+    if (dirty_since &&
+        (lv_display_get_inactive_time(NULL) > SAVE_IDLE_MS || millis() - dirty_since > SAVE_MAX_DELAY_MS)) {
+        write_dirty_chat();  // one per loop, so a key or tap in between still gets through
+    }
     if (!radio_ok) {
         return;
     }
@@ -580,6 +618,11 @@ bool messenger_chat_summary(int chat, ChatSummary &out)
 int messenger_message_count(int chat)
 {
     return chat_count(chats[chat]);
+}
+
+uint32_t messenger_message_total(int chat)
+{
+    return chats[chat].total;
 }
 
 const ChatMessage *messenger_message(int chat, int index)
