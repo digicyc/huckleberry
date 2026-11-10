@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generates wifi_icon.c: the status bar's Wi-Fi icons as LVGL A8 (alpha-only) images.
+"""Generates src/wifi_icon.c: the status bar's Wi-Fi icons as LVGL A8 (alpha-only) images.
 
 The usual fan of a dot and three arcs, one image per signal level: wifi_icon_1 lights only the dot,
 wifi_icon_4 everything. Unlit parts are kept faint so the full shape stays visible. Like the
 satellite icon, the status bar tints them with the image recolor style. Antialiased by supersampling.
 
-    python3 tools/make_wifi_icon.py > wifi_icon.c
+    python3 tools/make_wifi_icon.py > src/wifi_icon.c
 """
 import math
 

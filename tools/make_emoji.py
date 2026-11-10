@@ -2,7 +2,7 @@
 # /// script
 # dependencies = ["pillow", "fonttools"]
 # ///
-"""Generates emoji_glyphs.c: the colour emoji HuckleBerry draws in messages and names.
+"""Generates src/emoji_glyphs.c: the colour emoji HuckleBerry draws in messages and names.
 
 Every single-code-point emoji in Noto Color Emoji (SIL Open Font License), so all the base emoji
 people send from the MeshCore apps, plus the regional indicator letters that flags are made of.
@@ -13,7 +13,7 @@ flash, all of them share one 256-colour palette (with alpha), and each emoji's p
 are raw-deflated; ui.cpp inflates an emoji with the ESP32-S3's ROM inflater the first time it's
 shown and turns it into an LVGL RGB565A8 image.
 
-    uv run tools/make_emoji.py > emoji_glyphs.c
+    uv run tools/make_emoji.py > src/emoji_glyphs.c
 """
 import argparse
 import zlib

@@ -7,7 +7,9 @@ T-Watch WatchApp (`../T-Watch/WatchApp`) reworked for the T-Deck's 320×240 scre
 trackball.
 
 Built with `arduino-cli`, LilyGoLib's T-Deck board package, `../T-Watch/LilyGoLib` and
-`../T-Watch/LilyGoLib-ThirdParty`.
+`../T-Watch/LilyGoLib-ThirdParty`. The code is in `src/` (`setup()` and `loop()` are in
+`src/main.cpp`); `HuckleBerry.ino` is only the stub file Arduino requires, `lib/MeshCore` is the
+copy of MeshCore it builds with, and `tools/` has the scripts that generate the images in `src/`.
 
 ```sh
 make deps               # once: board package and Arduino libraries
@@ -22,8 +24,8 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
 ## Using it
 
 - **Boot screen.** At power-on the HuckleBerry logo and version show while the apps start, and
-  stay until you tap the screen. The version is in `version.h` (also shown at the bottom of
-  Settings). The logo is `tools/logo.png`; `uv run tools/make_logo.py > logo.c` regenerates the
+  stay until you tap the screen. The version is in `src/version.h` (also shown at the bottom of
+  Settings). The logo is `tools/logo.png`; `uv run tools/make_logo.py > src/logo.c` regenerates the
   firmware's copy.
 - **Keyboard and trackball.** Typing goes into the screen's text field; Enter sends or presses.
   Hold **Shift** for capitals and **Sym** for the symbols printed on the keys; **Shift + $** types
@@ -52,7 +54,7 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
   any app. Direct messages show Sent / Delivered / Failed. Chats are kept on the FFat partition.
   Emoji in messages and names show in colour: every single emoji in Noto Color Emoji, with skin
   tones drawn in the default yellow, flags as their two letters, and combined emoji (👨‍🌾) as their
-  parts (👨🌾). `tools/make_emoji.py` generates them into `emoji_glyphs.c`.
+  parts (👨🌾). `tools/make_emoji.py` generates them into `src/emoji_glyphs.c`.
 - **Bluetooth** lets the MeshCore iPhone app use the T-Deck as its radio. It shows the name the app
   lists (**MeshCore-** plus the node name) and the six-digit PIN: in the app tap Connect, pick the
   T-Deck and enter the PIN. Channels and contacts are shared with the app; channels you add in the

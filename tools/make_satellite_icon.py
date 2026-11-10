@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generates satellite_icon.c: the status bar's GPS icon as an LVGL A8 (alpha-only) image.
+"""Generates src/satellite_icon.c: the status bar's GPS icon as an LVGL A8 (alpha-only) image.
 
 The status bar tints it with the image recolor style. Shapes are drawn upright (panels left and right,
 dish on top), rotated 45 degrees, and antialiased by supersampling.
 
-    python3 tools/make_satellite_icon.py > satellite_icon.c
+    python3 tools/make_satellite_icon.py > src/satellite_icon.c
 """
 import math
 

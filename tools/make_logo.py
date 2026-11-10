@@ -2,12 +2,12 @@
 # /// script
 # dependencies = ["pillow"]
 # ///
-"""Generates logo.c: the HuckleBerry logo for the boot screen, as an LVGL RGB565A8 image.
+"""Generates src/logo.c: the HuckleBerry logo for the boot screen, as an LVGL RGB565A8 image.
 
 The source is tools/logo.png, a large transparent PNG. The logo is cropped to its drawing,
 centered in a square and scaled down to SIZE px.
 
-    uv run tools/make_logo.py > logo.c
+    uv run tools/make_logo.py > src/logo.c
 """
 import os
 

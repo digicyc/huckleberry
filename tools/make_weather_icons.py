@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates weather_icons.c: the Weather app's condition icons as LVGL A4 (4-bit alpha-only) images.
+"""Generates src/weather_icons.c: the Weather app's condition icons as LVGL A4 (4-bit alpha-only) images.
 
 Each icon is one or two layers that the app stacks and tints separately (say, a yellow sun behind
 a white cloud). Every layer is made in two sizes, BIG for the current conditions and SMALL for the
@@ -8,7 +8,7 @@ in the order of the WeatherIcon enum in weather_app.cpp. weather_app_icon, for t
 partly cloudy icon in one layer. Shapes are drawn on a 24-unit grid and antialiased by supersampling;
 16 alpha levels look the same as 256 at these sizes and take half the flash.
 
-    python3 tools/make_weather_icons.py > weather_icons.c
+    python3 tools/make_weather_icons.py > src/weather_icons.c
 """
 import math
 
