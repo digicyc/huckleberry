@@ -3,11 +3,13 @@
 // stalled for a second at a time while a separate keyboard task used the bus.
 //
 // With C3 firmware from June 2025 or later, which reports the key matrix: Shift and Sym work held
-// down or tapped first (a tap applies to the next key), holding Backspace repeats it, Mic is back
-// (Sym+Mic is 0), and the light can be set. Older C3 firmware (as on this T-Deck) ignores those
-// commands and sends one character per key press; that's detected on the first press and read
-// instead, with Shift and Sym held down, no Mic key and no light control. Either way, Shift+$ types
-// &, which no key shows.
+// down or tapped first (a tap applies to the next key), holding Backspace repeats it, and Mic is back
+// (Sym+Mic is 0). Older C3 firmware (as on this T-Deck) ignores those commands and sends one
+// character per key press; that's detected on the first press and read instead, with Shift and Sym
+// held down and no Mic key. Either way, Shift+$ types &, which no key shows.
+//
+// The light can be set by C3 firmware from 25 December 2024 on. Before that, the C3 has no I2C
+// commands at all: the light starts off and only Alt+B, handled by the C3 itself, toggles it.
 #pragma once
 #include <stdint.h>
 

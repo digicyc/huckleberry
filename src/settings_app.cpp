@@ -158,7 +158,7 @@ void settings_init(lv_obj_t *home)
 
     // New messages always wake the screen; this only silences the chime.
     add_switch_row(cont, "Message sound", "A chime for new messages", message_sound, sound_cb);
-    add_switch_row(cont, "Keyboard light", "While the screen is on", keyboard_light, keyboard_cb);
+    add_switch_row(cont, "Keyboard light", "Older keyboards: press Alt+B", keyboard_light, keyboard_cb);
 
     battery_label = add_value_row(cont, "Battery");
     lv_obj_t *about = make_label(cont, "HuckleBerry " HUCKLEBERRY_VERSION " for LilyGo T-Deck", &lv_font_montserrat_12, GRAY);

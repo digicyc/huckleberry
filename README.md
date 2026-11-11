@@ -32,8 +32,11 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
   `&`, which isn't on any key. Backspace goes back when there's no text to delete. The keyboard's
   own ESP32-C3 firmware on this T-Deck predates June 2025, so it only sends characters; with newer C3 firmware (flashed through the 6-pin header
   next to RST with a USB-serial adapter, from LilyGo's `Keyboard_ESP32C3` example), Shift and Sym
-  also work tapped just before a key, Backspace repeats when held, the **mic key** goes back, and
-  the keyboard light follows Settings.
+  also work tapped just before a key, Backspace repeats when held, and the **mic key** goes back.
+
+  **Keyboard light:** C3 firmware from before 25 December 2024, as on this T-Deck, starts with the
+  light off and takes no commands for it; press **Alt+B** to turn it on or off. Newer C3 firmware
+  also lets HuckleBerry set it: it follows Settings and turns off with the screen.
 
   Rolling the trackball moves an outline between the buttons and rows on screen (or scrolls when
   there's nothing that way); clicking it presses the outlined item, and holding it for a moment
@@ -43,7 +46,7 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
   phone is connected), Wi-Fi signal, GPS satellites (green with a fix) and battery.
 - **Screen timeout** is set in Settings (1 min by default). Any key, trackball move or tap wakes the
   screen where you left it; the waking tap doesn't press anything. The keyboard light turns off with
-  the screen. New messages and alarms wake it.
+  the screen (with newer keyboard firmware). New messages and alarms wake it.
 - **Messages** (MeshCore, USA/Canada preset, 910.525 MHz): the Public channel, your group channels,
   and a chat for each companion that has advertised. **+** joins a hashtag channel (`#name`; the key
   comes from the name, so anyone using the same name can talk), creates a private group (random
