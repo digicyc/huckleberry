@@ -217,15 +217,20 @@ static const char *status_text(uint8_t status)
     return "";
 }
 
-// The line under a bubble: the time, and for our own messages the delivery status.
+// The line under a bubble: the time, then the delivery status of our own messages, or how many
+// repeaters a received one came through.
 static void format_meta(const ChatMessage &m, char *meta, size_t size)
 {
     const char *when = format_time(m.time);
+    char route[16] = "";
     if (m.status != MSG_RECEIVED) {
-        snprintf(meta, size, "%s%s%s", when, when[0] ? "  " : "", status_text(m.status));
-    } else {
-        strlcpy(meta, when, size);
+        strlcpy(route, status_text(m.status), sizeof(route));
+    } else if (m.hops == 0) {
+        strcpy(route, "direct");
+    } else if (m.hops > 0) {
+        snprintf(route, sizeof(route), "%d hop%s", m.hops, m.hops == 1 ? "" : "s");
     }
+    snprintf(meta, size, "%s%s%s", when, when[0] && route[0] ? "  \xE2\x80\xA2  " : "", route);  // U+2022 bullet
 }
 
 static void add_bubble(const ChatMessage &m, bool is_channel)

@@ -17,11 +17,14 @@ enum MessageStatus : uint8_t {
     MSG_FAILED,     // DM never acknowledged
 };
 
+static const int8_t HOPS_UNKNOWN = -1;
+
 struct ChatMessage {
     uint32_t time;  // epoch seconds (sender's clock for received messages)
     uint8_t status;
     char sender[32];  // empty for our own messages
     char text[MAX_CHAT_TEXT + 1];
+    int8_t hops;  // received messages: repeaters it came through (0 = heard directly), or HOPS_UNKNOWN
 };
 
 struct ChatSummary {
@@ -85,6 +88,31 @@ void messenger_set_location(double lat, double lon, double alt_m);  // from the 
 bool messenger_share_location();  // include the position in adverts
 void messenger_set_share_location(bool on);
 bool messenger_radio_ok();
+
+// The LoRa settings the MeshCore app has: radio parameters, the path hash size and a few mesh
+// options. They're MeshCore's own prefs, so the phone app sees changes made here and vice versa.
+static const int MIN_TX_DBM = -9, MAX_TX_DBM = LORA_TX_POWER;
+struct RadioSettings {
+    float freq;               // MHz
+    float bw;                 // kHz
+    uint8_t sf;               // spreading factor, 5-12
+    uint8_t cr;               // coding rate 4/5 to 4/8, as 5-8
+    int8_t tx_dbm;            // MIN_TX_DBM to MAX_TX_DBM
+    uint8_t path_hash_bytes;  // 1-3: bytes per repeater in a message's path
+    bool multi_acks;          // send delivery receipts twice
+    bool auto_add;            // add every node heard to the contacts
+};
+bool messenger_radio_settings(RadioSettings &out);
+// Applies and saves them; false (and no change) if a value is out of range.
+bool messenger_set_radio_settings(const RadioSettings &s);
+
+struct RadioStats {
+    int noise_floor;           // dBm
+    float last_rssi, last_snr;  // of the last packet received
+    uint32_t received, sent;   // packets since boot
+    uint32_t airtime_s;        // transmitting, since boot
+};
+void messenger_radio_stats(RadioStats &out);
 
 // Bluetooth link for the MeshCore phone app. The on/off setting is saved.
 bool messenger_bt_enabled();

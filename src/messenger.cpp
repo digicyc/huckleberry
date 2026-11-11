@@ -15,7 +15,8 @@
 // app can also change.
 //
 // Radio settings (LORA_FREQ, LORA_BW, ...) are global build flags in the Makefile because the
-// MeshCore library headers read them too. The phone app can change them; MyMesh saves its prefs.
+// MeshCore library headers read them too; they're the defaults for a new node. The LoRa app and the
+// phone app change them; MyMesh saves its prefs.
 
 static const int MAX_CHATS = 48;
 static const int MAX_MESSAGES = 60;  // kept per chat
@@ -46,7 +47,9 @@ struct ChatFileHeader {
     uint32_t last_activity;
     uint32_t count;
 };
-static const uint32_t CHAT_FILE_VERSION = 2;
+// Version 3 added ChatMessage.hops in what was padding, so version 2 files load too (with no hops).
+static const uint32_t CHAT_FILE_VERSION = 3;
+static_assert(sizeof(ChatMessage) == 200, "chat files store ChatMessage as is");
 
 static Chat *chats;  // MAX_CHATS entries in PSRAM
 static MessengerListener listener;
@@ -207,7 +210,7 @@ static void load_chats()
     }
     for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
         ChatFileHeader h;
-        if (f.read((uint8_t *)&h, sizeof(h)) != sizeof(h) || h.version != CHAT_FILE_VERSION) {
+        if (f.read((uint8_t *)&h, sizeof(h)) != sizeof(h) || (h.version != CHAT_FILE_VERSION && h.version != 2)) {
             continue;
         }
         int slot = free_slot();
@@ -225,6 +228,9 @@ static void load_chats()
         uint32_t count = min(h.count, (uint32_t)MAX_MESSAGES);
         c.total = 0;
         for (uint32_t i = 0; i < count && f.read((uint8_t *)&c.msgs[i], sizeof(ChatMessage)) == sizeof(ChatMessage); i++) {
+            if (h.version == 2) {
+                c.msgs[i].hops = HOPS_UNKNOWN;
+            }
             c.total++;
         }
     }
@@ -310,7 +316,8 @@ static void sync_channels()
     }
 }
 
-static uint32_t add_message(int chat, uint32_t time, uint8_t status, const char *sender, const char *text)
+static uint32_t add_message(int chat, uint32_t time, uint8_t status, const char *sender, const char *text,
+                            int8_t hops = HOPS_UNKNOWN)
 {
     Chat &c = chats[chat];
     uint32_t seq = c.total++;
@@ -320,6 +327,7 @@ static uint32_t add_message(int chat, uint32_t time, uint8_t status, const char 
     m.status = status;
     strlcpy(m.sender, sender, sizeof(m.sender));
     strlcpy(m.text, text, sizeof(m.text));
+    m.hops = hops;
     c.last_activity = ::time(NULL);
     return seq;
 }
@@ -336,9 +344,10 @@ static bool has_message(int chat, uint32_t time, bool incoming, const char *text
     return false;
 }
 
-static void add_and_notify(int chat, uint32_t time, uint8_t status, const char *sender, const char *text)
+static void add_and_notify(int chat, uint32_t time, uint8_t status, const char *sender, const char *text,
+                           int8_t hops = HOPS_UNKNOWN)
 {
-    add_message(chat, time, status, sender, text);
+    add_message(chat, time, status, sender, text, hops);
     bool incoming = status == MSG_RECEIVED;
     if (incoming) {
         chats[chat].unread++;
@@ -390,6 +399,23 @@ static void send_timed_out()
     start_send();
 }
 
+// A path length (packet or contact) keeps the hash size in its top two bits and the count below.
+static int8_t path_hops(uint8_t path_len)
+{
+    return path_len == OUT_PATH_UNKNOWN ? HOPS_UNKNOWN : path_len & 63;
+}
+
+// How many repeaters a received message came through. A flooded packet collects one path entry per
+// repeater. A direct one follows a route learned earlier and arrives with its path used up; it came
+// back along our route to the sender, so that route's length stands in.
+static int8_t message_hops(const mesh::Packet *pkt, const ContactInfo *from)
+{
+    if (pkt->isRouteFlood()) {
+        return pkt->getPathHashCount();
+    }
+    return from ? path_hops(from->out_path_len) : HOPS_UNKNOWN;
+}
+
 class DeckListener : public MyMesh::Listener {
 public:
     void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp,
@@ -402,7 +428,7 @@ public:
         int chat = contact_chat(from.id.pub_key, from.name);
         // Retries of the same message arrive with the same timestamp and text.
         if (!has_message(chat, sender_timestamp, true, text)) {
-            add_and_notify(chat, sender_timestamp, MSG_RECEIVED, from.name, text);
+            add_and_notify(chat, sender_timestamp, MSG_RECEIVED, from.name, text, message_hops(pkt, &from));
         }
     }
 
@@ -422,7 +448,7 @@ public:
             sender[sep - text] = '\0';
             text = sep + 2;
         }
-        add_and_notify(chat, time(NULL), MSG_RECEIVED, sender, text);
+        add_and_notify(chat, time(NULL), MSG_RECEIVED, sender, text, message_hops(pkt, NULL));
     }
 
     void onQueueSizeChanged(int) override {}
@@ -769,7 +795,7 @@ static void summarize(const ContactInfo &c, ContactSummary &s)
     strlcpy(s.name, c.name, sizeof(s.name));
     s.type = c.type;
     memcpy(s.key, c.id.pub_key, sizeof(s.key));
-    s.hops = c.out_path_len == OUT_PATH_UNKNOWN ? -1 : c.out_path_len;
+    s.hops = path_hops(c.out_path_len);
     s.last_heard = c.lastmod;
     s.has_location = c.gps_lat || c.gps_lon;
     s.lat = c.gps_lat / 1e6;
@@ -885,6 +911,64 @@ void messenger_set_share_location(bool on)
 bool messenger_radio_ok()
 {
     return radio_ok;
+}
+
+bool messenger_radio_settings(RadioSettings &out)
+{
+    if (!radio_ok) {
+        return false;
+    }
+    const NodePrefs *p = the_mesh.getNodePrefs();
+    out.freq = p->freq;
+    out.bw = p->bw;
+    out.sf = p->sf;
+    out.cr = p->cr;
+    out.tx_dbm = p->tx_power_dbm;
+    out.path_hash_bytes = p->path_hash_mode + 1;
+    out.multi_acks = p->multi_acks != 0;
+    out.auto_add = (p->manual_add_contacts & 1) == 0;
+    return true;
+}
+
+// The same checks and steps as MyMesh's CMD_SET_RADIO_PARAMS, CMD_SET_RADIO_TX_POWER,
+// CMD_SET_PATH_HASH_MODE and CMD_SET_OTHER_PARAMS, which the phone app uses. The frequency range is
+// the SX1262's.
+bool messenger_set_radio_settings(const RadioSettings &s)
+{
+    if (!radio_ok || s.freq < 150 || s.freq > 960 || s.bw < 7 || s.bw > 500 || s.sf < 5 || s.sf > 12 || s.cr < 5 ||
+        s.cr > 8 || s.tx_dbm < MIN_TX_DBM || s.tx_dbm > MAX_TX_DBM || s.path_hash_bytes < 1 || s.path_hash_bytes > 3) {
+        return false;
+    }
+    NodePrefs *p = the_mesh.getNodePrefs();
+    bool radio_changed = s.freq != p->freq || s.bw != p->bw || s.sf != p->sf || s.cr != p->cr;
+    bool power_changed = s.tx_dbm != p->tx_power_dbm;
+    p->freq = s.freq;
+    p->bw = s.bw;
+    p->sf = s.sf;
+    p->cr = s.cr;
+    p->tx_power_dbm = s.tx_dbm;
+    p->path_hash_mode = s.path_hash_bytes - 1;
+    p->multi_acks = s.multi_acks;
+    p->manual_add_contacts = (p->manual_add_contacts & ~1) | (s.auto_add ? 0 : 1);
+    the_mesh.savePrefs();
+    if (radio_changed) {
+        radio_driver.setParams(p->freq, p->bw, p->sf, p->cr);
+        Serial.printf("Radio set to %.3f MHz BW%.1f SF%d CR%d\n", (double)p->freq, (double)p->bw, p->sf, p->cr);
+    }
+    if (power_changed) {
+        radio_driver.setTxPower(p->tx_power_dbm);
+    }
+    return true;
+}
+
+void messenger_radio_stats(RadioStats &out)
+{
+    out.noise_floor = radio_driver.getNoiseFloor();
+    out.last_rssi = radio_driver.getLastRSSI();
+    out.last_snr = radio_driver.getLastSNR();
+    out.received = radio_driver.getPacketsRecv();
+    out.sent = radio_driver.getPacketsSent();
+    out.airtime_s = the_mesh.getTotalAirTime() / 1000;
 }
 
 bool messenger_bt_enabled()
