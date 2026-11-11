@@ -22,7 +22,7 @@ APP_FLAGS := -DLILYGO_SCREEN_CAPTURE_ENABLED=1
 EXTRA_FLAGS ?=
 FQBN  := lilygo_tdeck_temp:esp32:lilygo_tdeck:UploadSpeed=921600,USBMode=hwcdc,CDCOnBoot=default,PartitionScheme=app3M_fat9M_16MB,DebugLevel=none,LoopCore=1,EventsCore=1,EraseFlash=none
 
-.PHONY: deps build upload monitor flash settime screenshot ports clean
+.PHONY: deps build upload monitor flash release settime screenshot ports clean
 
 # The T-Deck board package and the Arduino libraries MeshCore and the Weather app need beyond
 # LilyGoLib-ThirdParty.
@@ -45,6 +45,28 @@ monitor:
 	arduino-cli monitor --port $(PORT) --config baudrate=$(BAUD)
 
 flash: build upload monitor
+
+# Firmware files for a GitHub release, in dist/, named with the version in src/version.h:
+#   huckleberry-<version>-install.bin  bootloader, partition table and app, flashed at 0x0. For a
+#                                      first install: it also clears the settings (NVS).
+#   huckleberry-<version>-update.bin   the app alone, flashed at 0x10000. Keeps settings, chats and
+#                                      the MeshCore identity.
+#   SHA256SUMS
+# The install image is Arduino's merged.bin without its padding to the full 16 MB flash.
+VERSION := $(shell sed -n 's/.*HUCKLEBERRY_VERSION "\(.*\)".*/\1/p' src/version.h)
+ESPTOOL ?= $(firstword $(wildcard $(HOME)/.arduino15/packages/esp32/tools/esptool_py/*/esptool) esptool)
+DIST    ?= dist
+
+release: build
+	rm -rf $(DIST)
+	mkdir -p $(DIST)
+	$(ESPTOOL) --chip esp32s3 merge-bin -o $(DIST)/huckleberry-$(VERSION)-install.bin \
+		--flash-mode keep --flash-freq keep --flash-size keep \
+		0x0 $(BUILD)/HuckleBerry.ino.bootloader.bin 0x8000 $(BUILD)/HuckleBerry.ino.partitions.bin \
+		0xe000 $(BUILD)/boot_app0.bin 0x10000 $(BUILD)/HuckleBerry.ino.bin
+	cp $(BUILD)/HuckleBerry.ino.bin $(DIST)/huckleberry-$(VERSION)-update.bin
+	cd $(DIST) && sha256sum *.bin > SHA256SUMS
+	@ls -l $(DIST)
 
 # Sends the host's current Unix time to the running sketch, which sets the clock.
 settime:

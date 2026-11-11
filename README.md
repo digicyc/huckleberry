@@ -17,6 +17,7 @@ make build              # compile into ./build
 make upload             # flash (finds the T-Deck's USB port, or pass PORT=/dev/ttyACMx)
 make monitor            # serial console at 115200
 make flash              # build + upload + monitor
+make release            # firmware files for a GitHub release, in dist/ (see the Makefile)
 make settime            # set the clock from this computer (GPS, Wi-Fi and the phone app also set it)
 make screenshot         # save the screen to screenshot.png (OUT=file.png); needs uv
 ```
