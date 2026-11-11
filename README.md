@@ -47,14 +47,15 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
 - **Screen timeout** is set in Settings (1 min by default). Any key, trackball move or tap wakes the
   screen where you left it; the waking tap doesn't press anything. The keyboard light turns off with
   the screen (with newer keyboard firmware). New messages and alarms wake it.
-- **Messages** (MeshCore, USA/Canada preset, 910.525 MHz): the Public channel, your group channels,
+- **Messages** (MeshCore; radio settings in the LoRa app): the Public channel, your group channels,
   and a chat for each companion that has advertised. **+** joins a hashtag channel (`#name`; the key
   comes from the name, so anyone using the same name can talk), creates a private group (random
   key; the chat's info screen shows the key to share), or joins one with its 32-hex-digit key. It
   also lists the people and nodes heard nearby (tap one to message it) and has **Advertise**. The
   **This T-Deck** card sets the name others see (TDeck-XXXX by default) and whether your adverts
   include your GPS position. New messages chime (Settings can silence it) and show a banner over
-  any app. Direct messages show Sent / Delivered / Failed. Chats are kept on the FFat partition.
+  any app. Direct messages show Sent / Delivered / Failed, and received messages how many
+  repeaters they came through ("direct" or "3 hops"). Chats are kept on the FFat partition.
   Emoji in messages and names show in colour: every single emoji in Noto Color Emoji, with skin
   tones drawn in the default yellow, flags as their two letters, and combined emoji (👨‍🌾) as their
   parts (👨🌾). `tools/make_emoji.py` generates them into `src/emoji_glyphs.c`.
@@ -63,6 +64,12 @@ make screenshot         # save the screen to screenshot.png (OUT=file.png); need
   T-Deck and enter the PIN. Channels and contacts are shared with the app; channels you add in the
   app appear in Messages within a couple of seconds, and messages sent from the phone show in the
   chats here.
+- **LoRa** has the MeshCore app's radio settings: a region preset (the app's list, from
+  `api.meshcore.nz`; USA by default), or the frequency, bandwidth, spreading factor, coding rate and
+  transmit power; the **path hash size** (1, 2 or 3 bytes per repeater in a message's path; floods
+  reach 64, 32 or 21 hops); extra delivery ACKs; and whether every node heard is added as a
+  contact. Changes apply right away and are MeshCore's own saved prefs, so the phone app shows the
+  same values. It also shows the noise floor, the last packet's signal, packet counts and airtime.
 - **Map** shows offline tiles from the SD card with your position as a blue dot and the MeshCore
   nodes whose adverts carry a position: repeaters as cyan diamonds, companions and other nodes as
   purple dots, labeled with their names where the labels don't overlap. The trackball pans; Enter,
@@ -104,7 +111,8 @@ included (`\n` Enter, `\b` Backspace, `\e` the mic key), `B<dx>,<dy>` rolls the 
 
 `lib/MeshCore` is a pinned copy of the parts of [MeshCore](https://github.com/meshcore-dev/MeshCore)
 this uses, including the companion radio node the phone app talks to; `tools/sync-meshcore.sh`
-updates it (see its header). Radio settings are in the Makefile (`MESH_FLAGS`).
+updates it (see its header). The Makefile's `MESH_FLAGS` set the radio defaults for a new node;
+after that, the LoRa app (or the phone app) changes them.
 `SX126X_DIO2_AS_RF_SWITCH` is `true`, as in Meshtastic's T-Deck build (MeshCore's own T-Deck build
 uses `false`); receiving is confirmed, but if your sent messages aren't heard, try `false`.
 

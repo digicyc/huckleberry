@@ -347,35 +347,6 @@ static void back_cb(lv_event_t *)
     map_open();  // picks up the new zoom levels
 }
 
-// A row of options, one checked.
-static lv_obj_t *choices(lv_obj_t *parent, const char *title, const char *const *map, int checked)
-{
-    lv_obj_t *card = make_card(parent, 62, NULL, NULL);
-    make_label(card, title, &lv_font_montserrat_14, GRAY);
-    lv_obj_t *bm = lv_buttonmatrix_create(card);
-    lv_buttonmatrix_set_map(bm, map);
-    lv_buttonmatrix_set_button_ctrl_all(bm, LV_BUTTONMATRIX_CTRL_CHECKABLE);
-    lv_buttonmatrix_set_one_checked(bm, true);
-    lv_buttonmatrix_set_button_ctrl(bm, checked, LV_BUTTONMATRIX_CTRL_CHECKED);
-    lv_obj_set_size(bm, LV_PCT(100), 30);
-    lv_obj_align(bm, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_opa(bm, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(bm, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(bm, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(bm, 4, LV_PART_MAIN);
-    lv_obj_set_style_text_font(bm, &lv_font_montserrat_14, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(bm, lv_color_white(), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(bm, lv_color_hex(0x3A3A3C), LV_PART_ITEMS);
-    lv_obj_set_style_radius(bm, 8, LV_PART_ITEMS);
-    lv_obj_set_style_shadow_width(bm, 0, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(bm, ORANGE, LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(bm, lv_color_black(), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_opa(bm, LV_OPA_40, LV_STATE_DISABLED);  // Detail, for All US
-    lv_obj_add_event_cb(bm, choice_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    ui_focusable(bm);
-    return bm;
-}
-
 void map_download_init(lv_obj_t *map)
 {
     map_screen = map;
@@ -391,8 +362,8 @@ void map_download_init(lv_obj_t *map)
     lv_obj_t *cont = make_scroll_column(screen);
 
     center_label = add_value_row(cont, "Around");
-    radius_bm = choices(cont, "Area", RADIUS_MAP, radius_index);
-    detail_bm = choices(cont, "Detail", DETAIL_MAP, detail_index);
+    radius_bm = make_choices(cont, "Area", RADIUS_MAP, radius_index, choice_cb);
+    detail_bm = make_choices(cont, "Detail", DETAIL_MAP, detail_index, choice_cb);
     estimate_label = make_label(cont, "", &lv_font_montserrat_12, GRAY);
     start_label = lv_obj_get_child(make_wide_button(cont, "", true, start_cb, NULL), 0);
     progress_bar = lv_bar_create(cont);

@@ -17,6 +17,7 @@
 #include "bluetooth_app.h"
 #include "gps_app.h"
 #include "keyboard.h"
+#include "lora_app.h"
 #include "map_app.h"
 #include "map_download.h"
 #include "messages.h"
@@ -36,6 +37,7 @@ static const lv_color_t RED = LV_COLOR_MAKE(0xF4, 0x43, 0x36);    // lv_palette_
 static const lv_color_t BLUE = LV_COLOR_MAKE(0x21, 0x96, 0xF3);   // lv_palette_main(LV_PALETTE_BLUE)
 
 LV_IMAGE_DECLARE(huckleberry_logo);
+LV_IMAGE_DECLARE(lora_icon);
 LV_IMAGE_DECLARE(satellite_icon);
 LV_IMAGE_DECLARE(weather_app_icon);
 LV_IMAGE_DECLARE(wifi_icon_1);
@@ -335,13 +337,10 @@ static void build_home()
     add_app(grid, &weather_app_icon, "Weather", lv_palette_main(LV_PALETTE_CYAN), [](lv_event_t *) { weather_open(); });
     add_app(grid, LV_SYMBOL_BELL, "Alarms", lv_palette_main(LV_PALETTE_ORANGE), [](lv_event_t *) { alarms_open(); });
     add_app(grid, LV_SYMBOL_BLUETOOTH, "Bluetooth", lv_palette_main(LV_PALETTE_INDIGO), [](lv_event_t *) { bluetooth_open(); });
+    add_app(grid, &lora_icon, "LoRa", lv_palette_main(LV_PALETTE_PINK), [](lv_event_t *) { lora_open(); });
     add_app(grid, LV_SYMBOL_WIFI, "Wi-Fi", lv_palette_main(LV_PALETTE_BLUE), [](lv_event_t *) { wifi_open(); });
     add_app(grid, LV_SYMBOL_SD_CARD, "SD Card", lv_palette_main(LV_PALETTE_DEEP_PURPLE), [](lv_event_t *) { sdcard_open(); });
     add_app(grid, LV_SYMBOL_SETTINGS, "Settings", lv_palette_main(LV_PALETTE_GREY), [](lv_event_t *) { settings_open(); });
-    // An empty slot keeps the second row's icons under the first row's.
-    lv_obj_t *spacer = lv_obj_create(grid);
-    lv_obj_remove_style_all(spacer);
-    lv_obj_set_size(spacer, 60, 1);
 
     unread_badge = lv_obj_create(lv_obj_get_parent(messages));
     lv_obj_remove_style_all(unread_badge);
@@ -540,6 +539,7 @@ void setup()
     }
     messages_init(home_screen);
     bluetooth_init(home_screen);
+    lora_init(home_screen);
     alarms_init(home_screen);
     sound_init();
 

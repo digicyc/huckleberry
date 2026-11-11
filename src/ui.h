@@ -46,6 +46,13 @@ lv_obj_t *add_value_row(lv_obj_t *parent, const char *caption);
 // Returns the switch; `cb` gets LV_EVENT_VALUE_CHANGED.
 lv_obj_t *add_switch_row(lv_obj_t *parent, const char *title, const char *note, bool on, lv_event_cb_t cb);
 
+// A card with a gray caption over a row of options (rows split by "\n" in `map`), one of them
+// checked, or none if `checked` is -1. `cb` gets LV_EVENT_VALUE_CHANGED. Dimmed while disabled.
+lv_obj_t *make_choices(lv_obj_t *parent, const char *title, const char *const *map, int checked, lv_event_cb_t cb);
+
+// Checks option `index` of a make_choices() row, or none if it's -1.
+void set_choice(lv_obj_t *choices, int index);
+
 // A full-width button: orange outline (or filled when `primary`).
 lv_obj_t *make_wide_button(lv_obj_t *parent, const char *text, bool primary, lv_event_cb_t cb, void *user_data);
 
