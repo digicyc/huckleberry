@@ -1,0 +1,110 @@
+# Publishes a GitHub release for the version in src/version.h: when a change to that file reaches
+# main (or when run by hand from the Actions tab), it builds the firmware with `make release` and
+# creates release v<version> with the files in dist/. A version that already has a release is
+# skipped, so bump HUCKLEBERRY_VERSION to publish a new one.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [src/version.h]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # The LilyGoLib commits the firmware is built and tested with; the local build uses the copies in
+  # ../T-Watch, so move these along when those are updated.
+  LILYGOLIB_REF: 57f6414e682ae124817ae0936f7b8251ac17d6c3
+  LILYGOLIB_THIRDPARTY_REF: 7279435d6ff92204596a93bfb60b4170ea6b738d
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.existing.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(sed -n 's/.*HUCKLEBERRY_VERSION "\(.*\)".*/\1/p' src/version.h)
+          test -n "$version" || { echo "::error::No HUCKLEBERRY_VERSION in src/version.h"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v${{ steps.version.outputs.version }} is already released; bump src/version.h to publish a new version."
+          fi
+
+  release:
+    needs: version
+    if: needs.version.outputs.exists != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.5.1
+
+      - name: Cache the board package and libraries
+        uses: actions/cache@v4
+        with:
+          path: ~/.arduino15
+          key: arduino15-${{ hashFiles('Makefile') }}
+
+      - name: Install the board package and libraries
+        run: make deps
+
+      - name: Get LilyGoLib
+        run: |
+          fetch() {
+            git init -q "$RUNNER_TEMP/lilygo/$1"
+            git -C "$RUNNER_TEMP/lilygo/$1" fetch -q --depth 1 "https://github.com/Xinyuan-LilyGO/$1.git" "$2"
+            git -C "$RUNNER_TEMP/lilygo/$1" checkout -q FETCH_HEAD
+          }
+          fetch LilyGoLib "$LILYGOLIB_REF"
+          fetch LilyGoLib-ThirdParty "$LILYGOLIB_THIRDPARTY_REF"
+
+      - name: Build the firmware files
+        run: make release LILYGO="$RUNNER_TEMP/lilygo"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: huckleberry-${{ env.VERSION }}
+          path: dist/
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md << EOF
+          Firmware for the LilyGo T-Deck Plus.
+
+          **First install:** flash \`huckleberry-$VERSION-install.bin\` at offset \`0x0\`. It also resets HuckleBerry's settings.
+
+          **Updating HuckleBerry:** flash \`huckleberry-$VERSION-update.bin\` at offset \`0x10000\`. Settings, chats and your MeshCore identity are kept.
+
+          To flash, use [Espressif's web flasher](https://espressif.github.io/esptool-js/) in Chrome or Edge, or
+          \`esptool --chip esp32s3 write-flash 0x0 huckleberry-$VERSION-install.bin\` (\`pip install esptool\`).
+          If the T-Deck isn't detected, hold the trackball down while switching it on.
+
+          The radio starts on MeshCore's USA preset: outside the USA, choose your region's preset in the LoRa app before sending.
+          \`SHA256SUMS\` has the files' checksums.
+          EOF
+          gh release create "v$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "HuckleBerry $VERSION" --notes-file notes.md

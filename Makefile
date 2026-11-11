@@ -9,6 +9,7 @@ BAUD  ?= 115200
 LILYGO ?= $(abspath ../T-Watch)
 BUILD  ?= build
 
+ESP32_INDEX := https://espressif.github.io/arduino-esp32/package_esp32_index.json
 TDECK_INDEX := https://raw.githubusercontent.com/Xinyuan-LilyGO/LilyGoLib/master/arduino/temporary_tdeck/package_lilygo_tdeck_index.json
 
 # MeshCore radio and table settings. They are global because the MeshCore and RadioLib headers
@@ -27,8 +28,9 @@ FQBN  := lilygo_tdeck_temp:esp32:lilygo_tdeck:UploadSpeed=921600,USBMode=hwcdc,C
 # The T-Deck board package and the Arduino libraries MeshCore and the Weather app need beyond
 # LilyGoLib-ThirdParty.
 deps:
-	arduino-cli core install esp32:esp32@3.3.10
-	arduino-cli core install lilygo_tdeck_temp:esp32 --additional-urls $(TDECK_INDEX)
+	arduino-cli core update-index --additional-urls $(ESP32_INDEX),$(TDECK_INDEX)
+	arduino-cli core install esp32:esp32@3.3.10 --additional-urls $(ESP32_INDEX)
+	arduino-cli core install lilygo_tdeck_temp:esp32@0.1.1 --additional-urls $(TDECK_INDEX)
 	arduino-cli lib install "ArduinoJson@7.4.3" "Crypto@0.4.0" "base64@1.3.0" "RTClib@2.1.4" "CayenneLPP@1.6.1"
 
 build:

@@ -22,6 +22,12 @@ make settime            # set the clock from this computer (GPS, Wi-Fi and the p
 make screenshot         # save the screen to screenshot.png (OUT=file.png); needs uv
 ```
 
+**Releases:** pushing a new `HUCKLEBERRY_VERSION` in `src/version.h` to `main` makes GitHub Actions
+(`.github/workflows/release.yml`) build the `make release` files and publish them as release
+`v<version>`. It can also be run from the Actions tab; versions that already have a release are
+skipped. It fetches LilyGoLib at the commits pinned in the workflow, so update those when the
+`../T-Watch` copies move.
+
 ## Using it
 
 - **Boot screen.** At power-on the HuckleBerry logo and version show while the apps start, and
