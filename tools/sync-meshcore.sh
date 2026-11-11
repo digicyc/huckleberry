@@ -3,7 +3,8 @@
 # uses into lib/MeshCore. Rerun with a different MESHCORE_REF to update it, or set MESHCORE_SRC to
 # use an existing checkout at that ref. That includes the companion radio firmware's node
 # (examples/companion_radio), which the phone app talks to over Bluetooth; tools/meshcore/ holds
-# HuckleBerry's target.h for it and a patch that stores its data on FFat instead of SPIFFS.
+# HuckleBerry's target.h for it and a patch that stores its data on FFat instead of SPIFFS and
+# holds back its contacts and advert writes until the screen is idle.
 set -eu
 
 MESHCORE_REF=${MESHCORE_REF:-81dbae592ffad40b4212bc0b37e82b38da08f4bc}

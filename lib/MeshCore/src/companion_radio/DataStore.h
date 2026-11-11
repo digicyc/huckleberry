@@ -50,6 +50,27 @@ public:
   uint32_t getStorageUsedKb() const;
   uint32_t getStorageTotalKb() const;
 
+  // HuckleBerry: a flash write stops the T-Deck's screen and input until it's done (the contacts file
+  // takes about 0.7 s, an advert blob 0.3 s), and adverts arrive at any time. So saveContacts() and
+  // putBlobByKey() only note what to write, and the app calls writePending() while it's idle.
+  uint32_t pendingSince() const { return _pending_since; }  // millis() of the oldest unwritten change, or 0
+  bool writePending();  // writes one pending file; false if nothing was pending
+
 private:
+  struct PendingBlob {
+    uint8_t key[8];  // the prefix the blob's file is named by
+    uint8_t len;     // 0 for a free slot
+    uint8_t data[255];
+  };
+  static const int MAX_PENDING_BLOBS = 32;
+  PendingBlob* _pending_blobs = NULL;
+  DataStoreHost* _pending_contacts_host = NULL;
+  bool (*_pending_contacts_filter)(const ContactInfo& c) = NULL;
+  uint32_t _pending_since = 0;
+  void notePending();
+  PendingBlob* findPendingBlob(const uint8_t key[], int key_len);
+  void writeContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c));
+  bool writeBlob(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len);
+
   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};
 };

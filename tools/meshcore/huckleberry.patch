@@ -1,6 +1,6 @@
 diff -ruN a/src/companion_radio/DataStore.cpp b/src/companion_radio/DataStore.cpp
---- a/src/companion_radio/DataStore.cpp	2026-10-30 13:46:40.956721079 -0600
-+++ b/src/companion_radio/DataStore.cpp	2026-10-29 16:39:22.969604317 -0600
+--- a/src/companion_radio/DataStore.cpp	2026-11-11 15:14:35.101303971 -0700
++++ b/src/companion_radio/DataStore.cpp	2026-11-11 15:20:01.951074136 -0700
 @@ -64,8 +64,7 @@
  }
  
@@ -29,7 +29,7 @@ diff -ruN a/src/companion_radio/DataStore.cpp b/src/companion_radio/DataStore.cp
  #elif defined(RP2040_PLATFORM)
    FSInfo info;
    info.totalBytes = 0;
-@@ -173,9 +172,19 @@
+@@ -173,9 +172,23 @@
  #elif defined(RP2040_PLATFORM)
    return LittleFS.format();
  #elif defined(ESP32)
@@ -37,6 +37,10 @@ diff -ruN a/src/companion_radio/DataStore.cpp b/src/companion_radio/DataStore.cp
 -  esp_err_t nvs_err = nvs_flash_erase(); // no need to reinit, will be done by reboot
 -  return fs_success && (nvs_err == ESP_OK);
 +  // HuckleBerry: FFat and NVS also hold the T-Deck's own data, so remove only the companion's files.
++  // Pending writes are dropped too, or they would put the contacts and adverts back.
++  if (_pending_blobs) memset(_pending_blobs, 0, MAX_PENDING_BLOBS * sizeof(PendingBlob));
++  _pending_contacts_host = NULL;
++  _pending_since = 0;
 +  static const char* files[] = {"/identity/_main.id", "/prefs.json", "/new_prefs", "/contacts3", "/channels2", "/adv_blobs"};
 +  for (const char* f : files) {
 +    _fs->remove(f);
@@ -52,9 +56,141 @@ diff -ruN a/src/companion_radio/DataStore.cpp b/src/companion_radio/DataStore.cp
  #else
    #error "need to implement format()"
  #endif
+@@ -288,6 +301,38 @@
+ }
+ 
+ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
++  // HuckleBerry: written later by writePending(), from the contacts as they are then
++  _pending_contacts_host = host;
++  _pending_contacts_filter = filter;
++  notePending();
++}
++
++void DataStore::notePending() {
++  if (!_pending_since) _pending_since = millis() | 1;
++}
++
++bool DataStore::writePending() {
++#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
++  for (int i = 0; _pending_blobs && i < MAX_PENDING_BLOBS; i++) {
++    PendingBlob& b = _pending_blobs[i];
++    if (b.len) {
++      writeBlob(b.key, sizeof(b.key), b.data, b.len);
++      b.len = 0;
++      return true;
++    }
++  }
++#endif
++  if (_pending_contacts_host) {
++    DataStoreHost* host = _pending_contacts_host;
++    _pending_contacts_host = NULL;
++    writeContacts(host, _pending_contacts_filter);
++    return true;
++  }
++  _pending_since = 0;
++  return false;
++}
++
++void DataStore::writeContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+   File file = openWrite(_getContactsChannelsFS(), "/contacts3");
+   if (file) {
+     uint32_t idx = 0;
+@@ -563,7 +608,20 @@
+   sprintf(path, "/bl/%s", fname);
+ }
+ 
++// HuckleBerry: the slot of the pending blob with this key, or NULL.
++DataStore::PendingBlob* DataStore::findPendingBlob(const uint8_t key[], int key_len) {
++  for (int i = 0; _pending_blobs && i < MAX_PENDING_BLOBS; i++) {
++    if (_pending_blobs[i].len && memcmp(_pending_blobs[i].key, key, key_len < 8 ? key_len : 8) == 0) return &_pending_blobs[i];
++  }
++  return NULL;
++}
++
+ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
++  PendingBlob* pending = findPendingBlob(key, key_len);
++  if (pending) {
++    memcpy(dest_buf, pending->data, pending->len);
++    return pending->len;
++  }
+   char path[64];
+   makeBlobPath(key, key_len, path, sizeof(path));
+ 
+@@ -578,7 +636,31 @@
+   return 0; // not found
+ }
+ 
++// HuckleBerry: kept until writePending() (or written now if every slot is taken).
+ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
++  if (len == 0) return false;
++  if (!_pending_blobs) {
++#if defined(ESP32)
++    _pending_blobs = (PendingBlob*) ps_calloc(MAX_PENDING_BLOBS, sizeof(PendingBlob));
++#else
++    _pending_blobs = (PendingBlob*) calloc(MAX_PENDING_BLOBS, sizeof(PendingBlob));
++#endif
++    if (!_pending_blobs) return writeBlob(key, key_len, src_buf, len);
++  }
++  PendingBlob* slot = findPendingBlob(key, key_len);
++  for (int i = 0; !slot && i < MAX_PENDING_BLOBS; i++) {
++    if (!_pending_blobs[i].len) slot = &_pending_blobs[i];
++  }
++  if (!slot) return writeBlob(key, key_len, src_buf, len);
++  memset(slot->key, 0, sizeof(slot->key));
++  memcpy(slot->key, key, key_len < 8 ? key_len : 8);
++  memcpy(slot->data, src_buf, len);
++  slot->len = len;
++  notePending();
++  return true;
++}
++
++bool DataStore::writeBlob(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+   char path[64];
+   makeBlobPath(key, key_len, path, sizeof(path));
+ 
+@@ -594,6 +676,8 @@
+ }
+ 
+ bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
++  PendingBlob* pending = findPendingBlob(key, key_len);
++  if (pending) pending->len = 0;
+   char path[64];
+   makeBlobPath(key, key_len, path, sizeof(path));
+ 
+diff -ruN a/src/companion_radio/DataStore.h b/src/companion_radio/DataStore.h
+--- a/src/companion_radio/DataStore.h	2026-11-11 15:14:35.099763553 -0700
++++ b/src/companion_radio/DataStore.h	2026-11-11 15:20:01.951027048 -0700
+@@ -50,6 +50,27 @@
+   uint32_t getStorageUsedKb() const;
+   uint32_t getStorageTotalKb() const;
+ 
++  // HuckleBerry: a flash write stops the T-Deck's screen and input until it's done (the contacts file
++  // takes about 0.7 s, an advert blob 0.3 s), and adverts arrive at any time. So saveContacts() and
++  // putBlobByKey() only note what to write, and the app calls writePending() while it's idle.
++  uint32_t pendingSince() const { return _pending_since; }  // millis() of the oldest unwritten change, or 0
++  bool writePending();  // writes one pending file; false if nothing was pending
++
+ private:
++  struct PendingBlob {
++    uint8_t key[8];  // the prefix the blob's file is named by
++    uint8_t len;     // 0 for a free slot
++    uint8_t data[255];
++  };
++  static const int MAX_PENDING_BLOBS = 32;
++  PendingBlob* _pending_blobs = NULL;
++  DataStoreHost* _pending_contacts_host = NULL;
++  bool (*_pending_contacts_filter)(const ContactInfo& c) = NULL;
++  uint32_t _pending_since = 0;
++  void notePending();
++  PendingBlob* findPendingBlob(const uint8_t key[], int key_len);
++  void writeContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c));
++  bool writeBlob(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len);
++
+   FILESYSTEM* _getContactsChannelsFS() const { if (_fsExtra) return _fsExtra; return _fs;};
+ };
 diff -ruN a/src/helpers/BaseChatMesh.cpp b/src/helpers/BaseChatMesh.cpp
---- a/src/helpers/BaseChatMesh.cpp	2026-10-30 13:46:40.955564598 -0600
-+++ b/src/helpers/BaseChatMesh.cpp	2026-10-30 13:46:40.945915639 -0600
+--- a/src/helpers/BaseChatMesh.cpp	2026-11-11 15:14:35.101424356 -0700
++++ b/src/helpers/BaseChatMesh.cpp	2026-11-11 15:20:01.950895673 -0700
 @@ -64,7 +64,9 @@
        latest = contacts[i].lastmod;
      }

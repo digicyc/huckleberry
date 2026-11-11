@@ -173,6 +173,10 @@ bool DataStore::formatFileSystem() {
   return LittleFS.format();
 #elif defined(ESP32)
   // HuckleBerry: FFat and NVS also hold the T-Deck's own data, so remove only the companion's files.
+  // Pending writes are dropped too, or they would put the contacts and adverts back.
+  if (_pending_blobs) memset(_pending_blobs, 0, MAX_PENDING_BLOBS * sizeof(PendingBlob));
+  _pending_contacts_host = NULL;
+  _pending_since = 0;
   static const char* files[] = {"/identity/_main.id", "/prefs.json", "/new_prefs", "/contacts3", "/channels2", "/adv_blobs"};
   for (const char* f : files) {
     _fs->remove(f);
@@ -297,6 +301,38 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
+  // HuckleBerry: written later by writePending(), from the contacts as they are then
+  _pending_contacts_host = host;
+  _pending_contacts_filter = filter;
+  notePending();
+}
+
+void DataStore::notePending() {
+  if (!_pending_since) _pending_since = millis() | 1;
+}
+
+bool DataStore::writePending() {
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
+  for (int i = 0; _pending_blobs && i < MAX_PENDING_BLOBS; i++) {
+    PendingBlob& b = _pending_blobs[i];
+    if (b.len) {
+      writeBlob(b.key, sizeof(b.key), b.data, b.len);
+      b.len = 0;
+      return true;
+    }
+  }
+#endif
+  if (_pending_contacts_host) {
+    DataStoreHost* host = _pending_contacts_host;
+    _pending_contacts_host = NULL;
+    writeContacts(host, _pending_contacts_filter);
+    return true;
+  }
+  _pending_since = 0;
+  return false;
+}
+
+void DataStore::writeContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
   File file = openWrite(_getContactsChannelsFS(), "/contacts3");
   if (file) {
     uint32_t idx = 0;
@@ -572,7 +608,20 @@ inline void makeBlobPath(const uint8_t key[], int key_len, char* path, size_t pa
   sprintf(path, "/bl/%s", fname);
 }
 
+// HuckleBerry: the slot of the pending blob with this key, or NULL.
+DataStore::PendingBlob* DataStore::findPendingBlob(const uint8_t key[], int key_len) {
+  for (int i = 0; _pending_blobs && i < MAX_PENDING_BLOBS; i++) {
+    if (_pending_blobs[i].len && memcmp(_pending_blobs[i].key, key, key_len < 8 ? key_len : 8) == 0) return &_pending_blobs[i];
+  }
+  return NULL;
+}
+
 uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+  PendingBlob* pending = findPendingBlob(key, key_len);
+  if (pending) {
+    memcpy(dest_buf, pending->data, pending->len);
+    return pending->len;
+  }
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -587,7 +636,31 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
   return 0; // not found
 }
 
+// HuckleBerry: kept until writePending() (or written now if every slot is taken).
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
+  if (len == 0) return false;
+  if (!_pending_blobs) {
+#if defined(ESP32)
+    _pending_blobs = (PendingBlob*) ps_calloc(MAX_PENDING_BLOBS, sizeof(PendingBlob));
+#else
+    _pending_blobs = (PendingBlob*) calloc(MAX_PENDING_BLOBS, sizeof(PendingBlob));
+#endif
+    if (!_pending_blobs) return writeBlob(key, key_len, src_buf, len);
+  }
+  PendingBlob* slot = findPendingBlob(key, key_len);
+  for (int i = 0; !slot && i < MAX_PENDING_BLOBS; i++) {
+    if (!_pending_blobs[i].len) slot = &_pending_blobs[i];
+  }
+  if (!slot) return writeBlob(key, key_len, src_buf, len);
+  memset(slot->key, 0, sizeof(slot->key));
+  memcpy(slot->key, key, key_len < 8 ? key_len : 8);
+  memcpy(slot->data, src_buf, len);
+  slot->len = len;
+  notePending();
+  return true;
+}
+
+bool DataStore::writeBlob(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 
@@ -603,6 +676,8 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 }
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
+  PendingBlob* pending = findPendingBlob(key, key_len);
+  if (pending) pending->len = 0;
   char path[64];
   makeBlobPath(key, key_len, path, sizeof(path));
 

@@ -79,11 +79,11 @@ uint16_t DeckBoard::getBattMilliVolts()
     return instance.getBattVoltage();
 }
 
-static bool write_dirty_chat();
+static bool write_pending();
 
 void DeckBoard::reboot()
 {
-    while (write_dirty_chat()) {
+    while (write_pending()) {
     }
     esp_restart();
 }
@@ -145,10 +145,12 @@ static void chat_path(int chat, char *path)
             k[4], k[5]);
 }
 
-// Writing a chat file takes about half a second (FFat's wear levelling erases flash), which froze the
-// screen when it happened on every message. So changes mark the chat dirty, and messenger_loop()
-// writes dirty chats once the screen has been left alone for a few seconds, or after a minute.
-static const uint32_t SAVE_IDLE_MS = 3000, SAVE_MAX_DELAY_MS = 60000;
+// Writing a chat file takes about half a second (FFat's wear levelling erases flash), and nothing else
+// runs meanwhile, which froze the screen when it happened on every message. MeshCore's contacts file
+// (0.7 s) and advert blobs (0.3 s, one per advert heard) are as slow. So changes mark the chat dirty
+// (and MeshCore's DataStore notes its own), and messenger_loop() writes them one file at a time once
+// the screen has been left alone for a few seconds, or after two minutes.
+static const uint32_t SAVE_IDLE_MS = 3000, SAVE_MAX_DELAY_MS = 120000;
 static uint32_t dirty_since;  // millis of the oldest unwritten change; 0 if none
 
 static void save_chat(int chat)
@@ -562,8 +564,8 @@ bool messenger_init()
     return true;
 }
 
-// Writes one dirty chat's file; false if none was dirty.
-static bool write_dirty_chat()
+// Writes one dirty chat's file, or else one of MeshCore's pending files; false if nothing was pending.
+static bool write_pending()
 {
     for (int i = 0; i < MAX_CHATS; i++) {
         if (chats[i].used && chats[i].dirty) {
@@ -572,14 +574,17 @@ static bool write_dirty_chat()
         }
     }
     dirty_since = 0;
-    return false;
+    return store.writePending();
 }
 
 void messenger_loop()
 {
-    if (dirty_since &&
-        (lv_display_get_inactive_time(NULL) > SAVE_IDLE_MS || millis() - dirty_since > SAVE_MAX_DELAY_MS)) {
-        write_dirty_chat();  // one per loop, so a key or tap in between still gets through
+    uint32_t since = dirty_since ? dirty_since : store.pendingSince();
+    if (store.pendingSince() && millis() - store.pendingSince() > millis() - since) {
+        since = store.pendingSince();
+    }
+    if (since && (lv_display_get_inactive_time(NULL) > SAVE_IDLE_MS || millis() - since > SAVE_MAX_DELAY_MS)) {
+        write_pending();  // one per loop, so a key or tap in between still gets through
     }
     if (!radio_ok) {
         return;
