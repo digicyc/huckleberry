@@ -6,6 +6,58 @@ maps you can download on the device, GPS, weather, alarms, Wi-Fi, SD card and se
 T-Watch WatchApp (`../T-Watch/WatchApp`) reworked for the T-Deck's 320×240 screen, keyboard and
 trackball.
 
+## Installing on your T-Deck
+
+Download the firmware from the [latest release](https://github.com/digicyc/huckleberry/releases/latest):
+
+- **`huckleberry-<version>-install.bin`**, flashed at offset **`0x0`**, for the first install (over
+  Meshtastic, MeshCore or the factory firmware). If you're reinstalling over HuckleBerry, it resets
+  HuckleBerry's settings (Wi-Fi, brightness and so on) but keeps chats and the MeshCore identity.
+- **`huckleberry-<version>-update.bin`**, flashed at offset **`0x10000`**, to update a T-Deck that
+  already runs HuckleBerry. Everything is kept.
+
+Your old firmware's settings and messages don't carry over. To go back to it later, flash it again
+the way its project describes (for example with its web flasher).
+
+### In the browser (Chrome or Edge on a computer)
+
+1. Connect the T-Deck with a USB-C data cable and switch it on.
+2. Open [Espressif's web flasher](https://espressif.github.io/esptool-js/), click **Connect**, and
+   choose the T-Deck: **USB JTAG/serial debug unit** (`ttyACM…` on Linux, `cu.usbmodem…` on macOS,
+   `COM…` on Windows).
+3. Under **Program**, set **Flash Address** to `0x0` (it starts as `0x1000`, which is wrong for the
+   T-Deck), choose `huckleberry-<version>-install.bin`, and click **Program**. To update instead,
+   use `0x10000` and the update file.
+4. When it finishes, click **Disconnect** and switch the T-Deck off and on.
+
+### From the command line
+
+With Python installed, on Linux, macOS or Windows:
+
+```sh
+pip install esptool
+esptool --chip esp32s3 write-flash 0x0 huckleberry-<version>-install.bin       # first install
+esptool --chip esp32s3 write-flash 0x10000 huckleberry-<version>-update.bin    # updating
+```
+
+esptool finds the T-Deck by itself; with several boards plugged in, add `--port` and the port
+(`/dev/ttyACM0`, `/dev/cu.usbmodem…` or `COM3`). To check the downloads first, run
+`sha256sum -c SHA256SUMS` (Linux) or `shasum -a 256 -c SHA256SUMS` (macOS) in their folder.
+
+### If the T-Deck isn't found
+
+Put it in download mode: switch it off, hold the trackball pressed down, switch it on (or plug in
+the USB cable), and let go. Then connect or run esptool again. After flashing, switch it off and on
+to start HuckleBerry.
+
+### First start
+
+Tap the screen to get past the logo. The radio starts on MeshCore's **USA** preset; anywhere else,
+open the **LoRa** app and choose your region's preset before sending. To use the MeshCore phone app,
+open **Bluetooth** for the PIN.
+
+## Building from source
+
 Built with `arduino-cli`, LilyGoLib's T-Deck board package, `../T-Watch/LilyGoLib` and
 `../T-Watch/LilyGoLib-ThirdParty`. The code is in `src/` (`setup()` and `loop()` are in
 `src/main.cpp`); `HuckleBerry.ino` is only the stub file Arduino requires, `lib/MeshCore` is the
