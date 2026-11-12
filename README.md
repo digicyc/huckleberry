@@ -62,6 +62,8 @@ Built with `arduino-cli`, LilyGoLib's T-Deck board package, `../T-Watch/LilyGoLi
 `../T-Watch/LilyGoLib-ThirdParty`. The code is in `src/` (`setup()` and `loop()` are in
 `src/main.cpp`); `HuckleBerry.ino` is only the stub file Arduino requires, `lib/MeshCore` is the
 copy of MeshCore it builds with, and `tools/` has the scripts that generate the images in `src/`.
+Arduino needs the project's folder to be named `HuckleBerry`, like the `.ino`, so clone it with
+`git clone git@github.com:digicyc/huckleberry.git HuckleBerry`.
 
 ```sh
 make deps               # once: board package and Arduino libraries

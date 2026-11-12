@@ -54,8 +54,15 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        working-directory: HuckleBerry
     steps:
+      # Arduino only builds a sketch whose folder is named like its .ino, and the repository's
+      # default checkout folder is huckleberry.
       - uses: actions/checkout@v4
+        with:
+          path: HuckleBerry
 
       - uses: arduino/setup-arduino-cli@v2
         with:
@@ -65,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.arduino15
-          key: arduino15-${{ hashFiles('Makefile') }}
+          key: arduino15-${{ hashFiles('HuckleBerry/Makefile') }}
 
       - name: Install the board package and libraries
         run: make deps
@@ -86,7 +93,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: huckleberry-${{ env.VERSION }}
-          path: dist/
+          path: HuckleBerry/dist/
 
       - name: Publish the release
         env:
