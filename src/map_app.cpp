@@ -2,7 +2,6 @@
 #include "gps_app.h"
 #include "map_download.h"
 #include "messenger.h"
-#include "track.h"
 #include "ui.h"
 #include <Preferences.h>
 #define LODEPNG_NO_COMPILE_CPP  // LVGL builds lodepng as C
@@ -31,21 +30,10 @@ static const int CACHE_TILES = 32;
 static const int MAX_OVERZOOM = 8;
 static const double MAX_LAT = 85.05112878;                  // web map projection limit
 static const lv_color_t BLUE = LV_COLOR_MAKE(0x21, 0x96, 0xF3);    // lv_palette_main(LV_PALETTE_BLUE)
-// Breadcrumb trail colors by activity; picked to stand out on topo maps and from the blue dot.
-static const lv_color_t ACTIVITY_COLORS[ACT_COUNT] = {
-    LV_COLOR_MAKE(0x75, 0x75, 0x75),  // unknown
-    LV_COLOR_MAKE(0x75, 0x75, 0x75),  // still
-    LV_COLOR_MAKE(0x2E, 0xB8, 0x3C),  // walking: green
-    LV_COLOR_MAKE(0xFF, 0x6D, 0x00),  // running: orange
-    LV_COLOR_MAKE(0xD5, 0x00, 0xF9),  // cycling: purple
-    LV_COLOR_MAKE(0xE5, 0x1C, 0x23),  // driving: red
-};
 static const lv_color_t PIN = LV_COLOR_MAKE(0xAB, 0x47, 0xBC);           // companions and other nodes: purple
 static const lv_color_t REPEATER_PIN = LV_COLOR_MAKE(0x00, 0xAC, 0xC1);  // repeaters: lv_palette_darken(CYAN, 1)
 static const int MAX_PINS = 24;  // pins on screen at once
 static const int PAN_STEP = 40;  // px per trackball step
-static const uint32_t TRAIL_GAP_S = 120;  // points further apart in time aren't joined
-static const int TRAIL_MIN_PX = 3;        // shorter steps are merged into the next one
 
 // A tile decoded to RGB565, ready to draw without touching the card again.
 struct Tile {
@@ -64,7 +52,7 @@ struct Slot {
 };
 
 static Preferences prefs;
-static lv_obj_t *home_screen, *screen, *layer, *trail, *marker, *zoom_label, *status_label, *locate_btn, *legend;
+static lv_obj_t *home_screen, *screen, *layer, *marker, *zoom_label, *status_label, *locate_btn;
 // MeshCore nodes whose adverts carry a position (companions, repeaters, room servers, sensors),
 // drawn as pins: a diamond for a repeater, a dot for the rest. Each pin shows whichever located
 // contact is in view, most recently heard first, with its name unless that would cover a pin placed
@@ -489,106 +477,6 @@ static void resolve(Slot &s)
     }
 }
 
-// ---------- Trail ----------
-
-// Clips the segment a-b to the rectangle (Liang-Barsky); false if none of it is inside.
-static bool clip_segment(double &ax, double &ay, double &bx, double &by, double x0, double y0, double x1, double y1)
-{
-    double t0 = 0, t1 = 1, dx = bx - ax, dy = by - ay;
-    const double p[4] = {-dx, dx, -dy, dy}, q[4] = {ax - x0, x1 - ax, ay - y0, y1 - ay};
-    for (int i = 0; i < 4; i++) {
-        if (p[i] == 0) {
-            if (q[i] < 0) {
-                return false;
-            }
-        } else {
-            double t = q[i] / p[i];
-            if (p[i] < 0) {
-                t0 = std::max(t0, t);
-            } else {
-                t1 = std::min(t1, t);
-            }
-        }
-    }
-    if (t0 > t1) {
-        return false;
-    }
-    double sx = ax, sy = ay;
-    ax = sx + t0 * dx;
-    ay = sy + t0 * dy;
-    bx = sx + t1 * dx;
-    by = sy + t1 * dy;
-    return true;
-}
-
-// Draws today's track over the tiles, each step in the color of the activity it was recorded in.
-static void trail_draw_cb(lv_event_t *e)
-{
-    int n = track_point_count();
-    if (zoom < 0 || n < 2) {
-        return;
-    }
-    const TrackPoint *pts = track_points();
-    double scale = world_size(zoom) / 4294967296.0;
-    lv_area_t area;
-    lv_obj_get_coords(trail, &area);
-    double left = cx - SCREEN_W / 2.0 - area.x1, top = cy - SCREEN_H / 2.0 - area.y1;
-    const double margin = 10;  // so round caps at the edge aren't cut short
-    lv_draw_line_dsc_t dsc;
-    lv_draw_line_dsc_init(&dsc);
-    dsc.width = 6;
-    dsc.round_start = dsc.round_end = 1;
-    lv_layer_t *l = lv_event_get_layer(e);
-    double px = 0, py = 0;
-    uint32_t prev_time = 0;
-    for (int i = 0; i < n; i++) {
-        double x = pts[i].x * scale - left, y = pts[i].y * scale - top;
-        if (i == 0 || pts[i].time - prev_time > TRAIL_GAP_S) {
-            px = x;
-            py = y;
-            prev_time = pts[i].time;
-            continue;
-        }
-        prev_time = pts[i].time;
-        if (fabs(x - px) < TRAIL_MIN_PX && fabs(y - py) < TRAIL_MIN_PX) {
-            continue;
-        }
-        double ax = px, ay = py, bx = x, by = y;
-        px = x;
-        py = y;
-        if (!clip_segment(ax, ay, bx, by, area.x1 - margin, area.y1 - margin, area.x2 + margin, area.y2 + margin)) {
-            continue;
-        }
-        dsc.color = ACTIVITY_COLORS[pts[i].activity < ACT_COUNT ? pts[i].activity : ACT_UNKNOWN];
-        dsc.p1.x = (lv_value_precise_t)lround(ax);
-        dsc.p1.y = (lv_value_precise_t)lround(ay);
-        dsc.p2.x = (lv_value_precise_t)lround(bx);
-        dsc.p2.y = (lv_value_precise_t)lround(by);
-        lv_draw_line(l, &dsc);
-    }
-}
-
-// Redraws the trail only when the view or the track changed; any redraw repaints the whole screen.
-static void update_trail()
-{
-    static double shown_cx = -1, shown_cy = -1;
-    static int shown_zoom = -2;
-    static uint32_t shown_version = UINT32_MAX;
-    uint32_t v = track_version();
-    if (cx != shown_cx || cy != shown_cy || zoom != shown_zoom || v != shown_version) {
-        shown_cx = cx;
-        shown_cy = cy;
-        shown_zoom = zoom;
-        shown_version = v;
-        lv_obj_invalidate(trail);
-    }
-    if (zoom >= 0 && track_point_count() > 1) {
-        lv_obj_remove_flag(legend, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(legend, LV_OBJ_FLAG_HIDDEN);
-    }
-}
-
 // ---------- View ----------
 
 static void update_marker()
@@ -669,7 +557,6 @@ static void layout()
             set_tile(s, -1, 0, 0);
         }
         update_marker();
-        update_trail();
         return;
     }
     double n = world_size(zoom);
@@ -687,7 +574,6 @@ static void layout()
         }
     }
     update_marker();
-    update_trail();
 }
 
 static void update_status()
@@ -992,12 +878,6 @@ static void build_screen()
         lv_obj_add_flag(s.box, LV_OBJ_FLAG_HIDDEN);
     }
 
-    trail = lv_obj_create(layer);  // above the tiles
-    lv_obj_remove_style_all(trail);
-    lv_obj_set_size(trail, SCREEN_W, SCREEN_H);
-    lv_obj_remove_flag(trail, (lv_obj_flag_t)(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-    lv_obj_add_event_cb(trail, trail_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
-
     marker = lv_obj_create(screen);
     lv_obj_remove_style_all(marker);
     lv_obj_set_size(marker, 16, 16);
@@ -1046,33 +926,6 @@ static void build_screen()
     locate_btn = map_button(LV_SYMBOL_GPS, LV_ALIGN_BOTTOM_RIGHT, -6, -6, locate_cb, 0, LV_EVENT_PRESSED);
     zoom_label = pill_label(LV_ALIGN_TOP_MID, STATUS_H + 10);
     status_label = pill_label(LV_ALIGN_BOTTOM_MID, -52);
-
-    // Trail colors.
-    legend = lv_obj_create(screen);
-    lv_obj_remove_style_all(legend);
-    lv_obj_set_size(legend, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(legend, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(legend, LV_OPA_70, 0);
-    lv_obj_set_style_radius(legend, 10, 0);
-    lv_obj_set_style_pad_hor(legend, 8, 0);
-    lv_obj_set_style_pad_ver(legend, 4, 0);
-    lv_obj_set_style_pad_column(legend, 4, 0);
-    lv_obj_set_flex_flow(legend, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(legend, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_remove_flag(legend, LV_OBJ_FLAG_CLICKABLE);
-    static const char *const LEGEND_NAMES[] = {"Walk", "Run", "Bike", "Drive"};
-    for (int i = 0; i < 4; i++) {
-        lv_obj_t *dot = lv_obj_create(legend);
-        lv_obj_remove_style_all(dot);
-        lv_obj_set_size(dot, 8, 8);
-        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(dot, ACTIVITY_COLORS[ACT_WALK + i], 0);
-        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        lv_obj_t *name = make_label(legend, LEGEND_NAMES[i], &lv_font_montserrat_12, lv_color_white());
-        lv_obj_set_style_margin_right(name, i < 3 ? 4 : 0, 0);
-    }
-    lv_obj_align(legend, LV_ALIGN_BOTTOM_LEFT, 6, -6);
-    lv_obj_add_flag(legend, LV_OBJ_FLAG_HIDDEN);
 
     lv_timer_create(refresh_cb, 1000, NULL);
     lv_timer_create(decode_cb, 0, NULL);

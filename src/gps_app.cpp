@@ -1,6 +1,5 @@
 #include "gps_app.h"
 #include "messenger.h"
-#include "track.h"
 #include "ui.h"
 #include <LilyGoLib.h>
 #include <Preferences.h>
@@ -25,7 +24,7 @@ static bool clock_synced;
 static uint32_t clock_synced_ms;
 
 static lv_obj_t *home_screen, *screen, *power_switch, *status_label, *values[ROW_COUNT];
-static lv_obj_t *sats_count_label, *bars_cont, *track_switch, *track_label;
+static lv_obj_t *sats_count_label, *bars_cont;
 
 // LilyGoLib probes for the receiver at boot by querying it, which fails when a u-blox is set to
 // another baud rate or is too busy to answer (seen on a T-Deck Plus whose earlier firmware left it
@@ -221,7 +220,6 @@ void gps_tick()
             messenger_set_location(gps.location.lat(), gps.location.lng(), gps.altitude.meters());
         }
     }
-    track_tick();
 }
 
 // ---------- Screen ----------
@@ -308,10 +306,6 @@ static void update_screen()
         }
     }
     update_bars();
-
-    char track_text[48];
-    snprintf(track_text, sizeof(track_text), "%s, %d points today", activity_name(track_activity()), track_point_count());
-    set_text(track_label, track_text);
 }
 
 static void switch_cb(lv_event_t *)
@@ -320,11 +314,6 @@ static void switch_cb(lv_event_t *)
     prefs.putBool("on", gps_on);
     gps_tick();
     update_screen();
-}
-
-static void track_switch_cb(lv_event_t *)
-{
-    track_set_recording(lv_obj_has_state(track_switch, LV_STATE_CHECKED));
 }
 
 static void back_cb(lv_event_t *)
@@ -348,8 +337,6 @@ static void build_screen()
     lv_obj_t *cont = make_scroll_column(screen);
 
     power_switch = status_switch_row(cont, "GPS", switch_cb, &status_label);
-    // Track: recorded to the SD card and drawn on the map.
-    track_switch = status_switch_row(cont, "Record track", track_switch_cb, &track_label);
 
     for (int row = 0; row < ROW_COUNT; row++) {
         values[row] = add_value_row(cont, ROW_NAMES[row]);
@@ -392,10 +379,6 @@ void gps_init(lv_obj_t *home)
     build_screen();
     if (gps_on) {
         lv_obj_add_state(power_switch, LV_STATE_CHECKED);
-    }
-    track_init();
-    if (track_recording()) {
-        lv_obj_add_state(track_switch, LV_STATE_CHECKED);
     }
 }
 

@@ -143,12 +143,10 @@ skipped. It fetches LilyGoLib at the commits pinned in the workflow, so update t
   the nearest lower-zoom one (up to 8 levels out), so with All US on the card it's never blank:
   detailed tiles where you downloaded them, a blurrier overview everywhere else.
   `tools/download_map_tiles.py` does the same from a computer for bigger areas (`--us-overview`
-  for All US). Today's GPS track is drawn as a trail colored by activity.
+  for All US).
 - **GPS**: on/off switch, position, altitude, speed, HDOP, and signal bars per satellite. A fix sets
-  the clock and feeds your position to MeshCore. **Record track** saves a point every 10 m to
-  `/tracks/YYYY-MM-DD.csv` on the card, labeled walking/running/cycling/driving from your speed (the
-  T-Deck has no motion sensor). The receiver is found at whatever baud rate it's set to; a u-blox
-  sleeps when switched off.
+  the clock and feeds your position to MeshCore. The receiver is found at whatever baud rate it's
+  set to; a u-blox sleeps when switched off.
 - **Weather** gets an Open-Meteo forecast (no key) for your position over Wi-Fi every 30 minutes;
   the home screen shows the current temperature.
 - **Alarms**: up to 8, with repeat days; they ring on the speaker for a minute (Snooze = 5 min).
