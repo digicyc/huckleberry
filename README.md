@@ -6,6 +6,17 @@ maps you can download on the device, GPS, weather, alarms, Wi-Fi, SD card and se
 T-Watch WatchApp (`../T-Watch/WatchApp`) reworked for the T-Deck's 320×240 screen, keyboard and
 trackball.
 
+## Screenshots
+
+| | | |
+|:-:|:-:|:-:|
+| ![Home screen](docs/screenshots/home.png) | ![Messages](docs/screenshots/messages.png) | ![Map](docs/screenshots/map.png) |
+| Home | Messages | Map |
+| ![GPS satellites](docs/screenshots/gps.png) | ![Weather](docs/screenshots/weather.png) | ![LoRa settings](docs/screenshots/lora.png) |
+| GPS | Weather | LoRa |
+
+Captured from a T-Deck Plus with `make screenshot`.
+
 ## Installing on your T-Deck
 
 Download the firmware from the [latest release](https://github.com/digicyc/huckleberry/releases/latest):
