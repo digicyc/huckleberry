@@ -131,6 +131,14 @@ skipped. It fetches LilyGoLib at the commits pinned in the workflow, so update t
   Emoji in messages and names show in colour: every single emoji in Noto Color Emoji, with skin
   tones drawn in the default yellow, flags as their two letters, and combined emoji (👨‍🌾) as their
   parts (👨🌾). `tools/make_emoji.py` generates them into `src/emoji_glyphs.c`.
+- **Contacts** lists every node in MeshCore's contact list, most recently heard first, in sections
+  for companions (purple person icon), repeaters (cyan radio mast), and room servers and sensors,
+  with each one's route, a GPS mark if its adverts carry a position, and when it was last heard.
+  Names show emoji like everywhere else. MeshCore keeps at most 50 contacts (`MAX_CONTACTS` in the
+  Makefile); the count shows at the top, and when it's full new nodes aren't added until you delete
+  some. The trash button in the header puts a delete button on every contact; a contact's screen
+  has its ID and position, **Message** for companions and **Delete contact**. `tools/make_contact_icons.py` generates the icons into
+  `src/contact_icons.c`.
 - **Bluetooth** lets the MeshCore iPhone app use the T-Deck as its radio. It shows the name the app
   lists (**MeshCore-** plus the node name) and the six-digit PIN: in the app tap Connect, pick the
   T-Deck and enter the PIN. Channels and contacts are shared with the app; channels you add in the

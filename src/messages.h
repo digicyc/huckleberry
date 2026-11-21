@@ -10,3 +10,6 @@ void messages_init(lv_obj_t *home);
 
 // Shows the chat list.
 void messages_open();
+
+// Shows a chat (from messenger_chats() or messenger_contact_chat()); its back button goes to the list.
+void messages_open_chat(int chat);

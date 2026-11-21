@@ -513,6 +513,44 @@ static void on_app_frame(const uint8_t *f, size_t len)
     }
 }
 
+// MyMesh loads only the first MAX_CONTACTS records of its contacts file and drops the rest when it
+// next saves. When the file holds more (MAX_CONTACTS was 128 before it was 50), keeps favourites,
+// then companions, then the most recently heard instead. Records are DataStore's /contacts3 layout.
+static void trim_contacts_file()
+{
+    static const size_t RECORD = 152, TYPE = 64, FLAGS = 65, LASTMOD = 140;  // record size and field offsets
+    File f = FFat.open("/contacts3");
+    size_t n = f ? f.size() / RECORD : 0;
+    if (n <= MAX_CONTACTS) {
+        f.close();
+        return;
+    }
+    uint8_t *records = (uint8_t *)ps_malloc(n * RECORD);
+    bool ok = records && f.read(records, n * RECORD) == n * RECORD;
+    f.close();
+    if (ok) {
+        qsort(records, n, RECORD, [](const void *a, const void *b) {
+            const uint8_t *ra = (const uint8_t *)a, *rb = (const uint8_t *)b;
+            int fa = ra[FLAGS] & 1, fb = rb[FLAGS] & 1;  // favourite
+            int ca = ra[TYPE] == ADV_TYPE_CHAT, cb = rb[TYPE] == ADV_TYPE_CHAT;
+            if (fa != fb || ca != cb) {
+                return fa != fb ? fb - fa : cb - ca;
+            }
+            uint32_t ta, tb;
+            memcpy(&ta, ra + LASTMOD, 4);
+            memcpy(&tb, rb + LASTMOD, 4);
+            return ta > tb ? -1 : ta < tb ? 1 : 0;  // newest first
+        });
+        f = FFat.open("/contacts3", "w");
+        if (f) {
+            f.write(records, MAX_CONTACTS * RECORD);
+            f.close();
+            Serial.printf("Kept %d of %u contacts\n", MAX_CONTACTS, (unsigned)n);
+        }
+    }
+    free(records);
+}
+
 // ---------- Public API ----------
 
 bool messenger_init()
@@ -533,6 +571,7 @@ bool messenger_init()
     }
 
     bool new_prefs = !FFat.exists("/prefs.json") && !FFat.exists("/new_prefs");
+    trim_contacts_file();
     store.begin();
     the_mesh.begin();
     NodePrefs *node = the_mesh.getNodePrefs();
@@ -812,7 +851,9 @@ int messenger_contacts(ContactSummary *out, int max)
     int n = 0;
     ContactInfo c;
     for (int i = 0; n < max && the_mesh.getContactByIdx(i, c); i++) {
-        summarize(c, out[n++]);
+        if (c.type != ADV_TYPE_NONE) {  // not MyMesh's reserved slots for anonymous senders
+            summarize(c, out[n++]);
+        }
     }
     for (int i = 1; i < n; i++) {
         for (int j = i; j > 0 && out[j].last_heard > out[j - 1].last_heard; j--) {
@@ -859,6 +900,8 @@ bool messenger_remove_contact(const uint8_t *key6)
         delete_chat(chat);
     }
     bool ok = the_mesh.removeContact(*contact);
+    // MyMesh only saves after its own changes; write without the anonymous entries, as it does.
+    store.saveContacts(&the_mesh, [](const ContactInfo &c) { return c.type != ADV_TYPE_NONE; });
     notify(-1, false);
     return ok;
 }

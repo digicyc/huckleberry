@@ -15,6 +15,7 @@
 #include <sys/time.h>
 #include "alarms.h"
 #include "bluetooth_app.h"
+#include "contacts_app.h"
 #include "gps_app.h"
 #include "keyboard.h"
 #include "lora_app.h"
@@ -38,6 +39,7 @@ static const lv_color_t BLUE = LV_COLOR_MAKE(0x21, 0x96, 0xF3);   // lv_palette_
 
 LV_IMAGE_DECLARE(huckleberry_logo);
 LV_IMAGE_DECLARE(lora_icon);
+LV_IMAGE_DECLARE(contacts_app_icon);
 LV_IMAGE_DECLARE(satellite_icon);
 LV_IMAGE_DECLARE(weather_app_icon);
 LV_IMAGE_DECLARE(wifi_icon_1);
@@ -264,20 +266,21 @@ static void build_boot_screen()
 
 // ---------- Home screen ----------
 
-// Adds an app icon (a rounded square with a symbol or alpha-only image) and its name to the grid.
+// Adds an app icon (a rounded square with a symbol or alpha-only image) and its name to the grid,
+// six to a row. Names are set 1 px tighter so the longest ("Bluetooth") stays within its column.
 static lv_obj_t *add_app(lv_obj_t *grid, const void *icon_src, const char *name, lv_color_t color, lv_event_cb_t cb)
 {
     lv_obj_t *item = lv_obj_create(grid);
     lv_obj_remove_style_all(item);
-    lv_obj_set_size(item, 60, LV_SIZE_CONTENT);
+    lv_obj_set_size(item, SCREEN_W / 6, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(item, 3, 0);
     lv_obj_remove_flag(item, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *btn = lv_button_create(item);
-    lv_obj_set_size(btn, 46, 46);
-    lv_obj_set_style_radius(btn, 13, 0);
+    lv_obj_set_size(btn, 44, 44);
+    lv_obj_set_style_radius(btn, 12, 0);
     lv_obj_set_style_bg_color(btn, color, 0);
     lv_obj_set_style_shadow_width(btn, 0, 0);
     lv_obj_set_style_outline_color(btn, lv_color_white(), LV_STATE_FOCUS_KEY);
@@ -293,7 +296,8 @@ static lv_obj_t *add_app(lv_obj_t *grid, const void *icon_src, const char *name,
     lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
     lv_obj_center(icon);
 
-    make_label(item, name, &lv_font_montserrat_12, lv_color_white());
+    lv_obj_t *label = make_label(item, name, &lv_font_montserrat_12, lv_color_white());
+    lv_obj_set_style_text_letter_space(label, -1, 0);
     return btn;
 }
 
@@ -325,13 +329,15 @@ static void build_home()
     lv_obj_remove_style_all(grid);
     lv_obj_set_size(grid, SCREEN_W, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(grid, 8, 0);
+    lv_obj_set_style_pad_left(grid, SCREEN_W % 6 / 2, 0);  // columns line up; the second row starts at the left
     lv_obj_remove_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(grid, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     lv_obj_t *messages = add_app(grid, LV_SYMBOL_ENVELOPE, "Messages", lv_palette_main(LV_PALETTE_LIGHT_BLUE),
                                  [](lv_event_t *) { messages_open(); });
+    add_app(grid, &contacts_app_icon, "Contacts", lv_palette_main(LV_PALETTE_PURPLE), [](lv_event_t *) { contacts_open(); });
     add_app(grid, LV_SYMBOL_IMAGE, "Map", lv_palette_main(LV_PALETTE_TEAL), [](lv_event_t *) { map_open(); });
     add_app(grid, LV_SYMBOL_GPS, "GPS", lv_palette_main(LV_PALETTE_GREEN), [](lv_event_t *) { gps_open(); });
     add_app(grid, &weather_app_icon, "Weather", lv_palette_main(LV_PALETTE_CYAN), [](lv_event_t *) { weather_open(); });
@@ -538,6 +544,7 @@ void setup()
         Serial.println("LoRa radio failed to start");
     }
     messages_init(home_screen);
+    contacts_init(home_screen);
     bluetooth_init(home_screen);
     lora_init(home_screen);
     alarms_init(home_screen);

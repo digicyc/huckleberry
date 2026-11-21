@@ -56,6 +56,9 @@ void set_choice(lv_obj_t *choices, int index);
 // A full-width button: orange outline (or filled when `primary`).
 lv_obj_t *make_wide_button(lv_obj_t *parent, const char *text, bool primary, lv_event_cb_t cb, void *user_data);
 
+// "just now", "5 min ago", "3 h ago" or "2 d ago" for an epoch time, or "" if the clock isn't set.
+const char *format_ago(uint32_t t);
+
 // Sets a label's text only when it changes, so unchanged labels aren't redrawn.
 void set_text(lv_obj_t *label, const char *text);
 

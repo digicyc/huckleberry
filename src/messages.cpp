@@ -10,7 +10,7 @@
 #include <time.h>
 
 static const int MAX_LISTED_CHATS = 48;     // messenger.cpp keeps at most this many
-static const int MAX_LISTED_CONTACTS = 128;  // MAX_CONTACTS
+static const int MAX_LISTED_CONTACTS = MAX_CONTACTS;
 static const uint32_t BANNER_MS = 4000;
 static const lv_color_t RED = LV_COLOR_MAKE(0xF4, 0x43, 0x36);  // lv_palette_main(LV_PALETTE_RED)
 static const int COMPOSE_H = 36;
@@ -59,26 +59,6 @@ static const char *format_time(uint32_t t)
 }
 
 // "just now", "5 min ago", "3 h ago", "2 d ago".
-static const char *format_ago(uint32_t t)
-{
-    static char buf[16];
-    long ago = (long)(time(NULL) - t);
-    if (t < 1735689600 || ago < 0) {
-        return "";
-    }
-    if (ago < 60) {
-        return "just now";
-    }
-    if (ago < 3600) {
-        snprintf(buf, sizeof(buf), "%ld min ago", ago / 60);
-    } else if (ago < 86400) {
-        snprintf(buf, sizeof(buf), "%ld h ago", ago / 3600);
-    } else {
-        snprintf(buf, sizeof(buf), "%ld d ago", ago / 86400);
-    }
-    return buf;
-}
-
 static lv_obj_t *section_label(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *label = make_label(parent, text, &lv_font_montserrat_12, GRAY);
@@ -959,6 +939,12 @@ void messages_init(lv_obj_t *home)
     build_banner();
     rebuild_list();
     messenger_set_listener(messenger_changed);
+}
+
+void messages_open_chat(int chat)
+{
+    rebuild_list();
+    open_chat_view(chat);
 }
 
 void messages_open()

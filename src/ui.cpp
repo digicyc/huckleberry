@@ -2,7 +2,9 @@
 #include "keyboard.h"
 #include <LilyGoLib.h>
 #include <LV_Helper.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <algorithm>
 #include <miniz.h>  // the ESP32-S3 ROM's inflater
 
@@ -319,6 +321,26 @@ lv_obj_t *make_wide_button(lv_obj_t *parent, const char *text, bool primary, lv_
     lv_obj_center(make_label(btn, text, &lv_font_montserrat_16, primary ? lv_color_black() : ORANGE));
     lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
     return btn;
+}
+
+const char *format_ago(uint32_t t)
+{
+    static char buf[16];
+    long ago = (long)(time(NULL) - t);
+    if (t < 1735689600 || ago < 0) {
+        return "";
+    }
+    if (ago < 60) {
+        return "just now";
+    }
+    if (ago < 3600) {
+        snprintf(buf, sizeof(buf), "%ld min ago", ago / 60);
+    } else if (ago < 86400) {
+        snprintf(buf, sizeof(buf), "%ld h ago", ago / 3600);
+    } else {
+        snprintf(buf, sizeof(buf), "%ld d ago", ago / 86400);
+    }
+    return buf;
 }
 
 void set_text(lv_obj_t *label, const char *text)
